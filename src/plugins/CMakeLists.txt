@@ -80,6 +80,7 @@ endif()
 add_subdirectory(python)
 add_subdirectory(clangformat)
 add_subdirectory(cmakeprojectmanager)
+add_subdirectory(codebooster)
 
 # Level 7:
 add_subdirectory(android)
