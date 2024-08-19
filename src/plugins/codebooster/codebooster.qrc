@@ -1,8 +1,32 @@
 <RCC>
-    <qresource prefix="/codegeex2">
+    <qresource prefix="/codebooster">
         <file>images/settingscategory_codebooster.png</file>
-        <file>images/settingscategory_codebooster@2x.png</file>
-        <file>images/codebooster@2x.png</file>
         <file>images/codebooster.png</file>
+        <file>images/codebooster@2x.png</file>
+        <file>images/settingscategory_codebooster@2x.png</file>
+        <file>images/chat.png</file>
+        <file>images/chat@2x.png</file>
+        <file>images/history.png</file>
+        <file>images/history@2x.png</file>
+        <file>images/back.png</file>
+        <file>images/back@2x.png</file>
+        <file>images/delete.png</file>
+        <file>images/delete@2x.png</file>
+        <file>images/edit.png</file>
+        <file>images/edit@2x.png</file>
+        <file>images/robot.png</file>
+        <file>images/robot@2x.png</file>
+        <file>images/user.png</file>
+        <file>images/user@2x.png</file>
+        <file>images/copy.png</file>
+        <file>images/copy@2x.png</file>
+        <file>images/insert.png</file>
+        <file>images/insert@2x.png</file>
+        <file>images/codefile.png</file>
+        <file>images/codefile@2x.png</file>
+        <file>images/collapse.png</file>
+        <file>images/expand@2x.png</file>
+        <file>images/expand.png</file>
+        <file>images/collapse@2x.png</file>
     </qresource>
 </RCC>

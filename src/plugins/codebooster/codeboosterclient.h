@@ -6,14 +6,15 @@
 #include <languageclient/client.h>
 
 #include <utils/filepath.h>
-
 #include <QHash>
 #include <QTemporaryDir>
+
 
 namespace CodeBooster::Internal {
 
 class CodeBoosterClient : public LanguageClient::Client
 {
+    Q_OBJECT
 public:
     CodeBoosterClient();
     ~CodeBoosterClient() override;
@@ -30,6 +31,12 @@ public:
 
     bool isEnabled(ProjectExplorer::Project *project);
 
+signals:
+    void documentSelectionChanged(const QString &fileName, const QString &text);
+
+private slots:
+    void onCurrentEditorChanged(Core::IEditor *editor);
+
 private:
     QMap<TextEditor::TextEditorWidget *, GetCompletionRequest> m_runningRequests;
     struct ScheduleData
@@ -39,6 +46,9 @@ private:
     };
     QMap<TextEditor::TextEditorWidget *, ScheduleData> m_scheduledRequests;
     CodeBoosterHoverHandler m_hoverHandler;
+
+    // 用于记录已经连接过的editors
+    QList<TextEditor::TextEditorWidget *> m_connectedEditors;
 };
 
 } // namespace CodeBooster::Internal

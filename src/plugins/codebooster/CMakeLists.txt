@@ -38,6 +38,7 @@ add_qtc_plugin(CodeBooster
   DEPENDS
     Qt::Widgets
     Qt::Network
+    Qt::Sql
     ExtensionSystem
     Utils
     ProjectExplorer
@@ -68,6 +69,79 @@ add_qtc_plugin(CodeBooster
     promptbuilder.cpp
     replyparser.h
     replyparser.cpp
+)
+
+target_sources(CodeBooster
+  PRIVATE
+    chatsidebar/chatviewfactory.cpp
+    chatsidebar/chatviewfactory.h
+    chatsidebar/chatview.cpp
+    chatsidebar/chatview.h
+    chatsidebar/chatview.ui
+    chatsidebar/inputwidget.cpp
+    chatsidebar/inputwidget.h
+    chatsidebar/instrumentor.h
+    chatsidebar/chatdatabase.cpp
+    chatsidebar/chatdatabase.h
+    chatsidebar/chatexportdialog.cpp
+    chatsidebar/chatexportdialog.h
+    chatsidebar/chatexportdialog.ui
+    chatsidebar/md4c/entity.c
+    chatsidebar/md4c/entity.h
+    chatsidebar/md4c/md4c.c
+    chatsidebar/md4c/md4c.h
+    chatsidebar/md4c/md4c-html.c
+    chatsidebar/md4c/md4c-html.h
+    chatsidebar/qmarkdowntextedit/linenumberarea.h
+    chatsidebar/qmarkdowntextedit/markdownhighlighter.cpp
+    chatsidebar/qmarkdowntextedit/markdownhighlighter.h
+    chatsidebar/qmarkdowntextedit/media.qrc
+    chatsidebar/qmarkdowntextedit/qmarkdowntextedit.cpp
+    chatsidebar/qmarkdowntextedit/qmarkdowntextedit.h
+    chatsidebar/qmarkdowntextedit/qownlanguagedata.cpp
+    chatsidebar/qmarkdowntextedit/qownlanguagedata.h
+    chatsidebar/qmarkdowntextedit/qplaintexteditsearchwidget.cpp
+    chatsidebar/qmarkdowntextedit/qplaintexteditsearchwidget.h
+    chatsidebar/qmarkdowntextedit/qplaintexteditsearchwidget.ui
+    chatsidebar/markdownpreview/codetohtmlconverter.cpp
+    chatsidebar/markdownpreview/codetohtmlconverter.h
+    chatsidebar/markdownpreview/filedialog.cpp
+    chatsidebar/markdownpreview/filedialog.h
+    chatsidebar/markdownpreview/markdownhtmlconverter.cpp
+    chatsidebar/markdownpreview/markdownhtmlconverter.h
+    chatsidebar/markdownpreview/markdownpreview.pri
+    chatsidebar/markdownpreview/markdownpreviewsetting.cpp
+    chatsidebar/markdownpreview/markdownpreviewsetting.h
+    chatsidebar/markdownpreview/messagepreviewwidget.cpp
+    chatsidebar/markdownpreview/messagepreviewwidget.h
+    chatsidebar/markdownpreview/misc.cpp
+    chatsidebar/markdownpreview/misc.h
+    chatsidebar/markdownpreview/notepreviewwidget.cpp
+    chatsidebar/markdownpreview/notepreviewwidget.h
+    chatsidebar/markdownpreview/qtexteditsearchwidget.cpp
+    chatsidebar/markdownpreview/qtexteditsearchwidget.h
+    chatsidebar/markdownpreview/qtexteditsearchwidget.ui
+    chatsidebar/markdownpreview/resource.qrc
+    chatsidebar/markdownpreview/schema.cpp
+    chatsidebar/markdownpreview/schema.h
+    chatsidebar/markdownpreview/schemes.conf
+    codeboosterutils.h
+    codeboosterutils.cpp
+    chatsidebar/chathistorypage.h
+    chatsidebar/chathistorypage.cpp
+    chatsidebar/chathistorypage.ui
+    chatsidebar/chatsessionwgt.h
+    chatsidebar/chatsessionwgt.cpp
+    chatsidebar/chatsessionwgt.ui
+    widgetcover.cpp widgetcover.h
+    chatsidebar/sliderindicator.h
+    chatsidebar/sliderindicator.cpp
+    widgettheme.h
+    widgettheme.cpp
+    chatsidebar/customlinewidget.h
+    askcodeboostertaskhandler.h
+    askcodeboostertaskhandler.cpp
+
 )
 
 qt_add_translations(CodeBooster TS_FILES CodeBooster_zh_CN.ts)

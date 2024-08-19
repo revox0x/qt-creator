@@ -1,5 +1,5 @@
-#ifndef CODEGEEX2OPTIONSPAGE_H
-#define CODEGEEX2OPTIONSPAGE_H
+#ifndef CODEBOOSTEROPTIONSPAGE_H
+#define CODEBOOSTEROPTIONSPAGE_H
 
 #include <coreplugin/dialogs/ioptionspage.h>
 
@@ -12,6 +12,8 @@ public:
 
     static CodeBoosterOptionsPage &instance();
 };
+
+
 } // namespace CodeBooster
 
-#endif // CODEGEEX2OPTIONSPAGE_H
+#endif // CODEBOOSTEROPTIONSPAGE_H

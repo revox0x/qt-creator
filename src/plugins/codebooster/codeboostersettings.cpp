@@ -1,105 +1,55 @@
 #include "codeboostersettings.h"
 
-#include <projectexplorer/project.h>
+#include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonArray>
+#include <QLoggingCategory>
+#include <projectexplorer/project.h>
+#include <coreplugin/messagemanager.h>
+
 #include "codeboosterconstants.h"
 #include "codeboostertr.h"
+#include "codeboosterutils.h"
 
 namespace CodeBooster {
 
-static void initEnableAspect(Utils::BoolAspect &enableCodeBooster)
-{
-    enableCodeBooster.setSettingsKey(Constants::ENABLE_CODEGEEX2);
-    enableCodeBooster.setDisplayName(Tr::tr("Enable CodeBooster"));
-    enableCodeBooster.setLabelText(Tr::tr("Enable CodeBooster"));
-    enableCodeBooster.setToolTip(Tr::tr("Enables the CodeBooster integration."));
-    enableCodeBooster.setDefaultValue(false);
-}
+static Q_LOGGING_CATEGORY(codeBooster, "qtc.codebooster.setting", QtWarningMsg)
 
-CodeBoosterSettings::CodeBoosterSettings()
+CodeBoosterSettings::CodeBoosterSettings():
+    mMaxAutoCompleteContextTokens(2048),
+    mChatAttachedMessagesCount(0),
+    mApplySucess(true)
 {
     setAutoApply(false);
-
-    initEnableAspect(enableCodeBooster);
 
     autoComplete.setDisplayName(Tr::tr("Auto Complete"));
     autoComplete.setSettingsKey("CodeBooster.Autocomplete");
     autoComplete.setLabelText(Tr::tr("Request completions automatically"));
     autoComplete.setDefaultValue(true);
-    autoComplete.setEnabler(&enableCodeBooster);
     autoComplete.setToolTip(Tr::tr("Automatically request suggestions for the current text cursor "
                                    "position after changes to the document."));
 
-    url.setDefaultValue("http://127.0.0.1:7860/run/predict");
-    url.setDisplayStyle(Utils::StringAspect::LineEditDisplay);
-    url.setSettingsKey("CodeBooster.URL");
-    url.setLabelText(Tr::tr("URL of CodeBooster API:"));
-    url.setHistoryCompleter("CodeBooster.URL.History");
-    url.setDisplayName(Tr::tr("CodeBooster API URL"));
-    url.setEnabler(&enableCodeBooster);
-    url.setToolTip(Tr::tr("Input URL of CodeBooster API."));
+    // 初始化设置
+    configJson.setDisplayName(Tr::tr("Model Config"));
+    configJson.setSettingsKey("CodeBooster.ConfigJson");
+    configJson.setLabelText(Tr::tr("Model Config"));
+    configJson.setToolTip(Tr::tr("CodeBooster config write here"));
+    configJson.setDisplayStyle(Utils::StringAspect::DisplayStyle::TextEditDisplay);
+    configJson.setDefaultValue(defaultModelConfig());
 
-    contextLimit.setDefaultValue(8192);
-    contextLimit.setRange(100,8192);
-    contextLimit.setSettingsKey("CodeBooster.ContextLimit");
-    contextLimit.setLabelText(Tr::tr("Context length limit:"));
-    contextLimit.setDisplayName(Tr::tr("Context length limit"));
-    contextLimit.setEnabler(&enableCodeBooster);
-    contextLimit.setToolTip(Tr::tr("Maximum length of context send to server."));
+    readSettings();
 
-    length.setDefaultValue(20);
-    length.setRange(1,500);
-    length.setSettingsKey("CodeBooster.Length");
-    length.setLabelText(Tr::tr("Output sequence length:"));
-    length.setDisplayName(Tr::tr("Output sequence length"));
-    length.setEnabler(&enableCodeBooster);
-    length.setToolTip(Tr::tr("Number of tokens to generate each time."));
+    QStringList errInfos;
+    parseConfigSettings(configJson.value().trimmed(), errInfos);
 
-    temperarure.setDefaultValue(0.2);
-    temperarure.setRange(0.0,1.0);
-    temperarure.setSettingsKey("CodeBooster.Temperarure");
-    temperarure.setLabelText(Tr::tr("Temperature:"));
-    temperarure.setDisplayName(Tr::tr("Temperature"));
-    temperarure.setEnabler(&enableCodeBooster);
-    temperarure.setToolTip(Tr::tr("Affects how \"random\" the model’s output is."));
-
-    topK.setDefaultValue(0);
-    topK.setRange(0,100);
-    topK.setSettingsKey("CodeBooster.TopK");
-    topK.setLabelText(Tr::tr("Top K:"));
-    topK.setDisplayName(Tr::tr("Top K"));
-    topK.setEnabler(&enableCodeBooster);
-    topK.setToolTip(Tr::tr("Affects how \"random\" the model's output is."));
-
-    topP.setDefaultValue(0.95);
-    topP.setRange(0.0,1.0);
-    topP.setSettingsKey("CodeBooster.TopP");
-    topP.setLabelText(Tr::tr("Top P:"));
-    topP.setDisplayName(Tr::tr("Top P"));
-    topP.setEnabler(&enableCodeBooster);
-    topP.setToolTip(Tr::tr("Affects how \"random\" the model's output is."));
-
-    seed.setDefaultValue(8888);
-    seed.setRange(0,65535);
-    seed.setSettingsKey("CodeBooster.Seed");
-    seed.setLabelText(Tr::tr("Seed:"));
-    seed.setDisplayName(Tr::tr("Seed"));
-    seed.setEnabler(&enableCodeBooster);
-    seed.setToolTip(Tr::tr("Random number seed."));
-
-    expandHeaders.setDisplayName(Tr::tr("Try to expand headers (experimnetal)"));
-    expandHeaders.setSettingsKey("CodeBooster.ExpandHeaders");
-    expandHeaders.setLabelText(Tr::tr("Try to expand headers (experimnetal)"));
-    expandHeaders.setDefaultValue(true);
-    expandHeaders.setEnabler(&enableCodeBooster);
-    expandHeaders.setToolTip(Tr::tr("Try to expand headers when sending requests."));
-
-    braceBalance.setDisplayName(Tr::tr("Brace balance (experimnetal)"));
-    braceBalance.setSettingsKey("CodeBooster.BraceBalance");
-    braceBalance.setLabelText(Tr::tr("Brace balance (experimnetal)"));
-    braceBalance.setDefaultValue(true);
-    braceBalance.setEnabler(&enableCodeBooster);
-    braceBalance.setToolTip(Tr::tr("Stop suggestions from breaking brace balance."));
+    // 输出错误信息
+    for (const QString &errInfo : errInfos)
+    {
+        // 当不启用自动补全时不提示补全模型的错误信息
+        if (!autoComplete() && errInfo.contains("tabAutocompleteModel"))
+            continue;
+        CodeBooster::Internal::outputMessages({errInfo}, CodeBooster::Internal::Error);
+    }
 }
 
 CodeBoosterSettings &CodeBoosterSettings::instance()
@@ -108,42 +58,327 @@ CodeBoosterSettings &CodeBoosterSettings::instance()
     return settings;
 }
 
-/**
- * @brief CodeBoosterSettings::completionRequestParams 自动代码补全请求参数
- * @return
- */
-QJsonObject CodeBoosterSettings::completionRequestParams()
+QJsonObject CodeBoosterSettings::buildRequestParamJson(const ModelParam &param, bool stream)
 {
-    QJsonObject params;
-    params.insert("model", "glm-4-flash");
-    params.insert("stream", false);
-    params.insert("temperature", 0.1);
-    params.insert("top_p", 0.7);
-    params.insert("max_tokens", 512);
+    QJsonObject requestJson;
 
-    return params;
+    requestJson.insert("model", param.modelName);
+    requestJson.insert("temperature", param.temperature);
+    requestJson.insert("top_p", param.top_p);
+    requestJson.insert("max_tokens", param.max_tokens);
+    requestJson.insert("presence_penalty", param.presence_penalty);
+    requestJson.insert("frequency_penalty", param.frequency_penalty);
+    requestJson.insert("stream", stream);
+
+    return requestJson;
 }
 
-QString CodeBoosterSettings::model()
+int CodeBoosterSettings::chatAttachedMsgCount() const
 {
-    return "glm-4-flash";
+    if ((mChatAttachedMessagesCount < 99) && (mChatAttachedMessagesCount >= 0))
+        return mChatAttachedMessagesCount;
+
+    return 0;
+}
+
+QString CodeBoosterSettings::defaultModelConfig()
+{
+    // TODO: 每个model都可以定义systemmsg，未定义时使用默认systemMsg
+    // TODO: 是否添加自动补全延时debounceDelay？
+    QString setting =R"(
+{
+  "tabAutocompleteModel": {
+    "model": "",
+    "apiKey": "",
+    "apiUrl": "",
+    "maxOutputTokens": 1024,
+    "temperature": 0.1,
+    "top_P": 0.7,
+    "presence_penalty": 0,
+    "frequency_penalty": 0,
+    "maxContextTokens": 2048
+  },
+  "chatModels": [
+    {
+      "title": "",
+      "model": "",
+      "apiKey": "",
+      "apiUrl": "",
+      "maxOutputTokens": 2048,
+      "temperature": 0.1,
+      "top_P": 0.7,
+      "presence_penalty": 0,
+      "frequency_penalty": 0
+    }
+  ],
+  "options": {
+    "chatAttachedMessagesCount": 1
+  }
+}
+)";
+
+    return setting.trimmed();
+}
+
+QString CodeBoosterSettings::apiBaseToUrl(const QString &apiBase)
+{
+    //return QString("https://%1/chat/completions").arg(apiBase);
+    return apiBase;
+}
+
+ModelParam CodeBoosterSettings::defaultAcmModelParam()
+{
+    ModelParam param;
+    param.temperature = 0.1;
+    param.top_p       = 0.7;
+    param.max_tokens  = 1024;
+    param.presence_penalty = 0;
+    param.frequency_penalty = 0;
+
+    return param;
+}
+
+ModelParam CodeBoosterSettings::defaultChatModelParam()
+{
+    ModelParam param;
+    param.temperature = 0.1;
+    param.top_p       = 0.7;
+    param.max_tokens  = 2048;
+    param.presence_penalty = 0;
+    param.frequency_penalty = 0;
+
+    return param;
+}
+
+int CodeBoosterSettings::defaultMaxAutoCompleteContextTokens()
+{
+    return 2048;
+}
+
+void CodeBoosterSettings::apply()
+{
+    // 记录原始配置
+    ModelParam oldAcmParam = mAutoCompModelParam;
+    QList<ModelParam> oldChatParams = mChatModelParams;
+    int oldMaxAcmContextTokens = mMaxAutoCompleteContextTokens;
+
+    // 初始化
+    mAutoCompModelParam = ModelParam();
+    mChatModelParams.clear();
+    mMaxAutoCompleteContextTokens = 2048;
+
+    // 读取设置
+    AspectContainer::apply();
+    QString configJsonStr = configJson.expandedValue();
+    QStringList errInfos;
+
+    parseConfigSettings(configJsonStr, errInfos);
+
+    // 没有错误的情况下才应用设置
+    if (errInfos.isEmpty())
+    {
+        mApplySucess = true;
+        emit showModelConfigErrInfo(QStringList());
+        emit modelConfigUpdated();
+    }
+    else
+    {
+        // 还原模型设置
+        mAutoCompModelParam = oldAcmParam;
+        mChatModelParams    = oldChatParams;
+        mMaxAutoCompleteContextTokens = oldMaxAcmContextTokens;
+
+        mApplySucess = false;
+
+        // 显示错误信息
+        emit showModelConfigErrInfo(errInfos);
+    }
+}
+
+void CodeBoosterSettings::initConfigJsonSetting()
+{
+    if (QString(configJson.value()).trimmed().isEmpty())
+    {
+        configJson.setValue(defaultModelConfig(), BeQuiet);
+    }
+}
+
+bool CodeBoosterSettings::applySucess() const
+{
+    return mApplySucess;
+}
+
+void CodeBoosterSettings::parseConfigSettings(const QString &configJsonStr, QStringList &errInfos)
+{
+    // 解析 JSON 字符串
+    QJsonDocument jsonDoc = QJsonDocument::fromJson(configJsonStr.toUtf8());
+    if (jsonDoc.isObject())
+    {
+        QJsonObject jsonObj = jsonDoc.object();
+
+        // 解析 tabAutocompleteModel
+        if (jsonObj.contains("tabAutocompleteModel") && jsonObj["tabAutocompleteModel"].isObject())
+        {
+            QJsonObject tabAutocompleteModelObj = jsonObj["tabAutocompleteModel"].toObject();
+
+            // 必须字段
+            if (tabAutocompleteModelObj.contains("model"))
+                mAutoCompModelParam.modelName = tabAutocompleteModelObj["model"].toString();
+            else
+                errInfos << "缺失字段：tabAutocompleteModel.model";
+
+            if (tabAutocompleteModelObj.contains("apiKey"))
+                mAutoCompModelParam.apiKey = tabAutocompleteModelObj["apiKey"].toString();
+            else
+                errInfos << "缺失字段：tabAutocompleteModel.apiKey";
+
+            if (tabAutocompleteModelObj.contains("apiUrl"))
+                mAutoCompModelParam.apiUrl = apiBaseToUrl(tabAutocompleteModelObj["apiUrl"].toString());
+            else
+                errInfos << "缺失字段：tabAutocompleteModel.apiBase";
+
+            // 非必须字段
+            if (tabAutocompleteModelObj.contains("maxOutputTokens"))
+                mAutoCompModelParam.max_tokens = tabAutocompleteModelObj["maxOutputTokens"].toInt();
+            else
+                mAutoCompModelParam.max_tokens = defaultAcmModelParam().max_tokens;
+
+            if (tabAutocompleteModelObj.contains("temperature"))
+                mAutoCompModelParam.temperature = tabAutocompleteModelObj["temperature"].toDouble();
+            else
+                mAutoCompModelParam.temperature = defaultAcmModelParam().temperature;
+
+            if (tabAutocompleteModelObj.contains("top_P"))
+                mAutoCompModelParam.top_p = tabAutocompleteModelObj["top_P"].toDouble();
+            else
+                mAutoCompModelParam.top_p = defaultAcmModelParam().top_p;
+
+            if (tabAutocompleteModelObj.contains("presence_penalty"))
+                mAutoCompModelParam.presence_penalty = tabAutocompleteModelObj["presence_penalty"].toInt();
+            else
+                mAutoCompModelParam.presence_penalty = defaultAcmModelParam().presence_penalty;
+
+            if (tabAutocompleteModelObj.contains("frequency_penalty"))
+                mAutoCompModelParam.frequency_penalty = tabAutocompleteModelObj["frequency_penalty"].toInt();
+            else
+                mAutoCompModelParam.frequency_penalty = defaultAcmModelParam().frequency_penalty;
+
+
+            if (tabAutocompleteModelObj.contains("maxContextTokens"))
+                mMaxAutoCompleteContextTokens = tabAutocompleteModelObj["maxContextTokens"].toInt();
+            else
+                mMaxAutoCompleteContextTokens = defaultMaxAutoCompleteContextTokens();
+        }
+        else
+        {
+            errInfos << "缺失字段：tabAutocompleteModel";
+        }
+
+        // 解析 models
+        if (jsonObj.contains("chatModels") && jsonObj["chatModels"].isArray())
+        {
+            QJsonArray modelsArray = jsonObj["chatModels"].toArray();
+            for (const QJsonValue& modelValue : modelsArray)
+            {
+                if (modelValue.isObject())
+                {
+                    QJsonObject modelObj = modelValue.toObject();
+                    ModelParam modelParam;
+
+                    // 必须字段
+                    if (modelObj.contains("title"))
+                        modelParam.title = modelObj["title"].toString();
+                    else
+                        errInfos << "缺失字段：chatModels.title";
+
+                    if (modelObj.contains("model"))
+                        modelParam.modelName = modelObj["model"].toString();
+                    else
+                        errInfos << "缺失字段：chatModels.model";
+
+                    if (modelObj.contains("apiKey"))
+                        modelParam.apiKey = modelObj["apiKey"].toString();
+                    else
+                        errInfos << "缺失字段：chatModels.apiKey";
+
+                    if (modelObj.contains("apiUrl"))
+                        modelParam.apiUrl = apiBaseToUrl(modelObj["apiUrl"].toString());
+                    else
+                        errInfos << "缺失字段：chatModels.apiBase";
+
+                    // 非必须字段
+                    if (modelObj.contains("maxOutputTokens"))
+                        mAutoCompModelParam.max_tokens = modelObj["maxOutputTokens"].toInt();
+                    else
+                        mAutoCompModelParam.max_tokens = defaultChatModelParam().max_tokens;
+
+                    if (modelObj.contains("temperature"))
+                        mAutoCompModelParam.temperature = modelObj["temperature"].toDouble();
+                    else
+                        mAutoCompModelParam.temperature = defaultChatModelParam().temperature;
+
+                    if (modelObj.contains("top_P"))
+                        mAutoCompModelParam.top_p = modelObj["top_P"].toDouble();
+                    else
+                        mAutoCompModelParam.top_p = defaultChatModelParam().top_p;
+
+                    if (modelObj.contains("presence_penalty"))
+                        mAutoCompModelParam.presence_penalty = modelObj["presence_penalty"].toInt();
+                    else
+                        mAutoCompModelParam.presence_penalty = defaultChatModelParam().presence_penalty;
+
+                    if (modelObj.contains("frequency_penalty"))
+                        mAutoCompModelParam.frequency_penalty = modelObj["frequency_penalty"].toInt();
+                    else
+                        mAutoCompModelParam.frequency_penalty = defaultChatModelParam().frequency_penalty;
+
+                    mChatModelParams.append(modelParam);
+                }
+            }
+        }
+        else
+        {
+            errInfos << "缺失字段：chatModels";
+        }
+
+        // 解析options
+        if (jsonObj.contains("options") && jsonObj["options"].isObject())
+        {
+            QJsonObject optionsObj = jsonObj["options"].toObject();
+
+            if (optionsObj.contains("chatAttachedMessagesCount"))
+            {
+                mChatAttachedMessagesCount = optionsObj["chatAttachedMessagesCount"].toInt();
+            }
+        }
+        else
+        {
+            errInfos << "options";
+        }
+    }
+    else
+    {
+        errInfos << QString("JSON 不是一个对象");
+    }
 }
 
 CodeBoosterProjectSettings::CodeBoosterProjectSettings(ProjectExplorer::Project *project, QObject *parent)
 {
     setAutoApply(true);
 
-    useGlobalSettings.setSettingsKey(Constants::CODEGEEX2_USE_GLOBAL_SETTINGS);
+    useGlobalSettings.setSettingsKey(Constants::CODEBOOSTER_USE_GLOBAL_SETTINGS);
     useGlobalSettings.setDefaultValue(true);
 
-    initEnableAspect(enableCodeBooster);
+    enableAutoComplete.setSettingsKey("CodeBooster.Autocomplete");
+    enableAutoComplete.setDisplayName(Tr::tr("Enable CodeBooster AutoComplete"));
+    enableAutoComplete.setLabelText(Tr::tr("Enable CodeBooster AutoComplete"));
+    enableAutoComplete.setToolTip(Tr::tr("Enables the CodeBooster Intergation AutoComplete."));
+    enableAutoComplete.setDefaultValue(false);
 
-    // QVariantMap map = project->namedSettings(Constants::CODEGEEX2_PROJECT_SETTINGS_ID).toMap();
-    // 兼容性
-    Utils::Store map = Utils::storeFromVariant(project->namedSettings(Constants::CODEGEEX2_PROJECT_SETTINGS_ID).toMap());
+    Utils::Store map = Utils::storeFromVariant(project->namedSettings(Constants::CODEBOOSTER_PROJECT_SETTINGS_ID).toMap());
     fromMap(map);
 
-    connect(&enableCodeBooster, &Utils::BoolAspect::changed, this, [this, project] { save(project); });
+    connect(&enableAutoComplete, &Utils::BoolAspect::changed, this, [this, project] { save(project); });
     connect(&useGlobalSettings, &Utils::BoolAspect::changed, this, [this, project] { save(project); });
 }
 
@@ -151,7 +386,7 @@ void CodeBoosterProjectSettings::save(ProjectExplorer::Project *project)
 {
     Utils::Store map;
     toMap(map);
-    project->setNamedSettings(Constants::CODEGEEX2_PROJECT_SETTINGS_ID, variantFromStore(map));
+    project->setNamedSettings(Constants::CODEBOOSTER_PROJECT_SETTINGS_ID, variantFromStore(map));
 
     // This triggers a restart of the Copilot language server.
     CodeBoosterSettings::instance().apply();
@@ -165,8 +400,8 @@ void CodeBoosterProjectSettings::setUseGlobalSettings(bool useGlobal)
 bool CodeBoosterProjectSettings::isEnabled() const
 {
     if (useGlobalSettings())
-        return CodeBoosterSettings::instance().enableCodeBooster();
-    return enableCodeBooster();
+        return CodeBoosterSettings::instance().autoComplete();
+    return enableAutoComplete();
 }
 
 } // namespace CodeBooster

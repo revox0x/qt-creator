@@ -12,12 +12,8 @@
 #include <coreplugin/editormanager/editormanager.h>
 
 #include <projectexplorer/projectmanager.h>
-
 #include <utils/filepath.h>
-
 #include <texteditor/textdocumentlayout.h>
-#include <texteditor/texteditor.h>
-
 #include <languageserverprotocol/lsptypes.h>
 
 #include <QTimer>
@@ -58,6 +54,9 @@ CodeBoosterClient::CodeBoosterClient()
 
     for (IDocument *doc : DocumentModel::openedDocuments())
         openDoc(doc);
+
+    connect(Core::EditorManager::instance(), &Core::EditorManager::currentEditorChanged, this, &CodeBoosterClient::onCurrentEditorChanged);
+
 }
 
 CodeBoosterClient::~CodeBoosterClient()
@@ -214,10 +213,31 @@ bool CodeBoosterClient::canOpenProject(Project *project)
 bool CodeBoosterClient::isEnabled(Project *project)
 {
     if (!project)
-        return CodeBoosterSettings::instance().enableCodeBooster();
+        return CodeBoosterSettings::instance().autoComplete();
 
     CodeBoosterProjectSettings settings(project);
     return settings.isEnabled();
+}
+
+void CodeBoosterClient::onCurrentEditorChanged(Core::IEditor *editor)
+{
+    auto textEditor = BaseTextEditor::currentTextEditor();
+    if (!textEditor)
+        return;
+
+    TextEditorWidget *widget = textEditor->editorWidget();
+
+    if (m_connectedEditors.contains(widget))
+        return;
+
+    connect(widget, &TextEditorWidget::cursorPositionChanged, this, [this, widget, textEditor](){
+        if (CodeBoosterSettings::instance().showEditorSelection)
+        {
+            emit documentSelectionChanged(widget->textDocument()->filePath().fileName(), widget->selectedText());
+        }
+    });
+
+    m_connectedEditors << widget;
 }
 
 } // namespace CodeBooster::Internal

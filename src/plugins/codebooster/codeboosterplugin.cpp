@@ -8,11 +8,14 @@
 #include "codeboostersettings.h"
 #include "codeboostersuggestion.h"
 #include "codeboostertr.h"
+#include "chatsidebar/chatviewfactory.h"
+#include "chatsidebar/chatview.h"
 
 #include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/editormanager/editormanager.h>
 #include <coreplugin/icore.h>
 #include <coreplugin/statusbarmanager.h>
+#include <coreplugin/navigationwidget.h>
 
 #include <languageclient/languageclientmanager.h>
 
@@ -34,6 +37,8 @@ using namespace ProjectExplorer;
 
 namespace CodeBooster {
 namespace Internal {
+
+static CodeBoosterPlugin *m_instance = nullptr;
 
 enum Direction { Previous, Next };
 void cycleSuggestion(TextEditor::TextEditorWidget *editor, Direction direction)
@@ -57,8 +62,15 @@ void cycleSuggestion(TextEditor::TextEditorWidget *editor, Direction direction)
     }
 }
 
+CodeBoosterPlugin *CodeBoosterPlugin::instance()
+{
+    return m_instance;
+}
+
 void CodeBoosterPlugin::initialize()
 {
+    m_instance = this;
+
     // 翻译文本
     QTranslator *translator=new QTranslator(QApplication::instance());
     QTimeZone localPosition = QDateTime::currentDateTime().timeZone();
@@ -67,9 +79,6 @@ void CodeBoosterPlugin::initialize()
             QApplication::installTranslator(translator);
         }
     }
-    // 兼容性
-    // CodeBoosterSettings::instance().readSettings(ICore::settings());
-    CodeBoosterSettings::instance().readSettings();
 
     // 初始化客户端
     restartClient();
@@ -81,7 +90,6 @@ void CodeBoosterPlugin::initialize()
 
 
     /// 注册一些功能按钮
-
     // 问题：这个按钮在哪里触发？
     QAction *requestAction = new QAction(this);
     requestAction->setText(Tr::tr("Request CodeBooster Suggestion"));
@@ -95,7 +103,7 @@ void CodeBoosterPlugin::initialize()
         }
     });
 
-    ActionManager::registerAction(requestAction, Constants::CODEGEEX2_REQUEST_SUGGESTION);
+    ActionManager::registerAction(requestAction, Constants::CODEBOOSTER_REQUEST_SUGGESTION);
 
 
     QAction *nextSuggestionAction = new QAction(this);
@@ -108,7 +116,7 @@ void CodeBoosterPlugin::initialize()
             cycleSuggestion(editor, Next);
     });
 
-    ActionManager::registerAction(nextSuggestionAction, Constants::CODEGEEX2_NEXT_SUGGESTION);
+    ActionManager::registerAction(nextSuggestionAction, Constants::CODEBOOSTER_NEXT_SUGGESTION);
 
     QAction *previousSuggestionAction = new QAction(this);
     previousSuggestionAction->setText(Tr::tr("Show previos CodeBooster Suggestion"));
@@ -120,46 +128,46 @@ void CodeBoosterPlugin::initialize()
             cycleSuggestion(editor, Previous);
     });
 
-    ActionManager::registerAction(previousSuggestionAction, Constants::CODEGEEX2_PREVIOUS_SUGGESTION);
+    ActionManager::registerAction(previousSuggestionAction, Constants::CODEBOOSTER_PREVIOUS_SUGGESTION);
 
     QAction *disableAction = new QAction(this);
-    disableAction->setText(Tr::tr("Disable CodeBooster"));
-    disableAction->setToolTip(Tr::tr("Disable CodeBooster."));
+    disableAction->setText(Tr::tr("关闭 CodeBooster 自动补全"));
+    disableAction->setToolTip(Tr::tr("关闭 CodeBooster 自动补全."));
     connect(disableAction, &QAction::triggered, this, [] {
-        CodeBoosterSettings::instance().enableCodeBooster.setValue(true);
+        CodeBoosterSettings::instance().autoComplete.setValue(true);
         CodeBoosterSettings::instance().apply();
     });
-    ActionManager::registerAction(disableAction, Constants::CODEGEEX2_DISABLE);
+    ActionManager::registerAction(disableAction, Constants::CODEBOOSTER_DISABLE);
 
     QAction *enableAction = new QAction(this);
-    enableAction->setText(Tr::tr("Enable CodeBooster"));
-    enableAction->setToolTip(Tr::tr("Enable CodeBooster."));
+    enableAction->setText(Tr::tr("开启 CodeBooster 自动补全"));
+    enableAction->setToolTip(Tr::tr("开启 CodeBooster 自动补全."));
     connect(enableAction, &QAction::triggered, this, [] {
-        CodeBoosterSettings::instance().enableCodeBooster.setValue(false);
+        CodeBoosterSettings::instance().autoComplete.setValue(false);
         CodeBoosterSettings::instance().apply();
     });
-    ActionManager::registerAction(enableAction, Constants::CODEGEEX2_ENABLE);
+    ActionManager::registerAction(enableAction, Constants::CODEBOOSTER_ENABLE);
 
     QAction *toggleAction = new QAction(this);
     toggleAction->setText(Tr::tr("Toggle CodeBooster"));
     toggleAction->setCheckable(true);
-    toggleAction->setChecked(CodeBoosterSettings::instance().enableCodeBooster.value());
-    toggleAction->setIcon(CODEGEEX2_ICON.icon());
+    toggleAction->setChecked(CodeBoosterSettings::instance().autoComplete.value());
+    toggleAction->setIcon(CODEBOOSTER_ICON.icon());
     connect(toggleAction, &QAction::toggled, this, [](bool checked) {
-        CodeBoosterSettings::instance().enableCodeBooster.setValue(checked);
+        CodeBoosterSettings::instance().autoComplete.setValue(checked);
         CodeBoosterSettings::instance().apply();
     });
 
-    ActionManager::registerAction(toggleAction, Constants::CODEGEEX2_TOGGLE);
+    ActionManager::registerAction(toggleAction, Constants::CODEBOOSTER_TOGGLE);
 
     auto updateActions = [toggleAction, requestAction] {
-        const bool enabled = CodeBoosterSettings::instance().enableCodeBooster.value();
+        const bool enabled = CodeBoosterSettings::instance().autoComplete.value();
         toggleAction->setToolTip(enabled ? Tr::tr("Disable CodeBooster.") : Tr::tr("Enable CodeBooster."));
         toggleAction->setChecked(enabled);
         requestAction->setEnabled(enabled);
     };
 
-    connect(&CodeBoosterSettings::instance().enableCodeBooster,
+    connect(&CodeBoosterSettings::instance().autoComplete,
             &BoolAspect::changed,
             this,
             updateActions);
@@ -172,6 +180,12 @@ void CodeBoosterPlugin::initialize()
 
     // 注册工程设置面板 
     setupCodeBoosterProjectPanel();
+
+    // 注册侧边栏
+    setupChatViewWidgetFactory();
+
+    // 注册编译问题提问按钮
+    connect(&mAskCompileErrorHandler, &AskCodeBoosterTaskHandler::askCompileError, this, &CodeBoosterPlugin::onHandleAskCodeBossterTask);
 }
 
 void CodeBoosterPlugin::extensionsInitialized()
@@ -185,6 +199,7 @@ void CodeBoosterPlugin::restartClient()
     LanguageClient::LanguageClientManager::shutdownClient(m_client);
 
     m_client = new CodeBoosterClient();
+    connect(m_client, &CodeBoosterClient::documentSelectionChanged, this, &CodeBoosterPlugin::documentSelectionChanged);
 }
 
 ExtensionSystem::IPlugin::ShutdownFlag CodeBoosterPlugin::aboutToShutdown()
@@ -193,6 +208,16 @@ ExtensionSystem::IPlugin::ShutdownFlag CodeBoosterPlugin::aboutToShutdown()
         return SynchronousShutdown;
     connect(m_client, &QObject::destroyed, this, &IPlugin::asynchronousShutdownFinished);
     return AsynchronousShutdown;
+}
+
+void CodeBoosterPlugin::onHandleAskCodeBossterTask(const QString &sysMsg, const QString &userMsg)
+{
+    // 激活对话侧边栏
+    QWidget *widget = Core::NavigationWidget::activateSubWidget(Constants::CODEBOOSTER_CHAT_VIEW_ID, Core::Side::Right);
+    if (ChatView * chatViewWgt = qobject_cast<ChatView *>(widget))
+    {
+        chatViewWgt->sendUserMessageNoContext(sysMsg, userMsg);
+    }
 }
 
 } // namespace Internal

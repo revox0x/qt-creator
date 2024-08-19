@@ -3347,6 +3347,9 @@ void TextEditorWidget::gotoLine(int line, int column, bool centerLine, bool anim
                 ++pos;
             }
             cursor.setPosition(pos);
+
+            //qDebug() << Q_FUNC_INFO << "cursor.selectedText() \n" << cursor.selectedText();
+
         }
 
         const DisplaySettings &ds = d->m_displaySettings;

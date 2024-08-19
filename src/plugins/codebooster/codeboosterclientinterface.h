@@ -1,5 +1,5 @@
-#ifndef CODEGEEX2_INTERNAL_CODEGEEX2CLIENTINTERFACE_H
-#define CODEGEEX2_INTERNAL_CODEGEEX2CLIENTINTERFACE_H
+#ifndef CODEBOOSTER_INTERNAL_CODEBOOSTERCLIENTINTERFACE_H
+#define CODEBOOSTER_INTERNAL_CODEBOOSTERCLIENTINTERFACE_H
 
 #include <languageclient/languageclientinterface.h>
 
@@ -18,11 +18,29 @@ public:
 
     Utils::FilePath serverDeviceTemplate() const override;
 
-public slots:
-    void replyFinished();
-
 protected:
     void sendData(const QByteArray &data) override;
+
+private slots:
+    void replyFinished();
+    void requestTimeout();
+
+private:
+    void getCompletionRequest(const QJsonObject &objSend);
+    void clearReply();
+    bool expandHeader(QString &txt,const QString &includeStr,const QString &path,int &space,int &pos);
+
+
+    bool completionModelConfigExist();
+
+    int countTokens(const QString &prompt);
+    QString getPrefix(const QString &originText);
+    QString getSuffix(const QString &originText, int maxSuffixTokens);
+    QJsonObject getRequsetData(const QString &prompt);
+
+private:
+    static QMap<QString,QString> m_langMap;
+
 private:
     QBuffer m_writeBuffer;
     QSharedPointer<QNetworkReply> m_reply;
@@ -33,11 +51,7 @@ private:
     QMap<QString,QString> m_fileLang;
 
     QSharedPointer<QNetworkAccessManager> m_manager;
-
-    void clearReply();
-    bool expandHeader(QString &txt,const QString &includeStr,const QString &path,int &space,int &pos);
-
-    static QMap<QString,QString> m_langMap;
+    QTimer mTimeoutTimer;
 
 
     // 补全缓存
@@ -46,16 +60,9 @@ private:
     QStringList mLastReplies; ///< 上次补全请求的结果
     void useCacheToCompletion();
     // end
-private:
-    int countTokens(const QString &prompt);
-
-    QString getPrefix(const QString &originText);
-    QString getSuffix(const QString &originText, int maxSuffixTokens);
-    QJsonObject getRequsetData(const QString &prompt);
-
 };
 
 } // namespace Internal
 } // namespace CodeBooster
 
-#endif // CODEGEEX2_INTERNAL_CODEGEEX2CLIENTINTERFACE_H
+#endif // CODEBOOSTER_INTERNAL_CODEBOOSTERCLIENTINTERFACE_H

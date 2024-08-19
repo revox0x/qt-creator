@@ -20,7 +20,7 @@ class CodeBoosterProjectSettingsWidget : public ProjectExplorer::ProjectSettings
 public:
     CodeBoosterProjectSettingsWidget()
     {
-        setGlobalSettingsId(Constants::CODEGEEX2_GENERAL_OPTIONS_ID);
+        setGlobalSettingsId(Constants::CODEBOOSTER_GENERAL_OPTIONS_ID);
         setUseGlobalSettingsCheckBoxVisible(true);
     }
 };
@@ -48,7 +48,7 @@ ProjectSettingsWidget *createCodeBoosterProjectPanel(Project *project)
 
     // clang-format off
     Column {
-        settings->enableCodeBooster,
+        settings->enableAutoComplete,
     }.attachTo(widget);
     // clang-format on
 
