@@ -8,48 +8,50 @@ local settings = {}
 ---@class BaseAspect
 settings.BaseAspect = {}
 
----Applies the changes from its volatileValue to its value
+---Applies the changes from its volatileValue to its value.
 function settings.BaseAspect:apply() end
 
 ---@class AspectCreate
----@field settingsKey? string The settings key of the aspect
----@field displayName? string The display name of the aspect
----@field labelText? string The label text of the aspect
----@field toolTip? string The tool tip of the aspect
----@field enabler? BoolAspect Enable / Disable this aspect based on the state of the `enabler`
----@field onValueChanged? function () Called when the value of the aspect changes
----@field onVolatileValueChanged? function () Called when the volatile value of the aspect changes
+---@field settingsKey? string The settings key of the aspect. If not set, the aspect will not be saved to the settings persistently.
+---@field displayName? string The display name of the aspect.
+---@field labelText? string The label text of the aspect.
+---@field toolTip? string The tool tip of the aspect.
+---@field enabler? BoolAspect Enable / Disable this aspect based on the state of the `enabler`.
+---@field onValueChanged? function () Called when the value of the aspect changes.
+---@field onVolatileValueChanged? function () Called when the volatile value of the aspect changes.
 local AspectCreate = {}
 
----The base class of most typed aspects
+---The base class of most typed aspects.
 ---@generic T
 ---@class TypedAspect<T> : BaseAspect
----@field value `T` The value of the aspect
----@field volatileValue `T` The temporary value of the aspect
----@field defaultValue `T` The default value of the aspect
+---@field value `T` The value of the aspect.
+---@field volatileValue `T` The temporary value of the aspect.
+---@field defaultValue `T` The default value of the aspect.
 local TypedAspect = {}
 
 ---@generic T
 ---@class TypedAspectCreate<T> : AspectCreate
----@field defaultValue `T` The default value of the aspect
+---@field defaultValue `T` The default value of the aspect.
 local TypedAspectCreate = {}
 
----A container for aspects
+---A container for aspects.
 ---@class AspectContainer : BaseAspect
 settings.AspectContainer = {}
 
----Options for creating an AspectContainer
+---Options for creating an AspectContainer.
 ---@class AspectContainerCreate
----@field autoApply? boolean Whether the aspects should be applied automatically or not
+---@field autoApply? boolean Whether the aspects should be applied automatically or not.
+---@field onApplied? function Called when the aspects are applied.
+---@field layouter? function The layouter of the aspect container.
+---@field settingsGroup? string The settings group of the aspect container.
 AspectContainerCreate = {}
 
-
----Create a new AspectContainer
+---Create a new AspectContainer.
 ---@param options AspectContainerCreate
 ---@return AspectContainer
 function settings.AspectContainer.create(options) end
 
----A aspect containing a boolean value
+---A aspect containing a boolean value.
 ---@class BoolAspect : TypedAspect<boolean>
 settings.BoolAspect = {}
 
@@ -63,7 +65,7 @@ settings.LabelPlacement = {
 ---@field labelPlacement? LabelPlacement:
 BoolAspectCreate = {}
 
----Create a new BoolAspect
+---Create a new BoolAspect.
 ---@param options BoolAspectCreate
 ---@return BoolAspect
 function settings.BoolAspect.create(options) end
@@ -71,9 +73,34 @@ function settings.BoolAspect.create(options) end
 settings.ColorAspect = {}
 function settings.ColorAspect.create(options) end
 
+---@class SelectionAspect : TypedAspect<int>
+---@field stringValue string The string value of the aspect.
 settings.SelectionAspect = {}
+---@enum SelectionDisplayStyle
+settings.SelectionDisplayStyle = {
+    RadioButtons = 0,
+    ComboBox = 0
+};
+
+---@class SelectionOption
+---@field name string The name of the option.
+---@field tooltip? string The tooltip of the option.
+---@field data? any The data of the option.
+SelectionOption = {}
+
+---@class SelectionAspectCreate : TypedAspectCreate<int>
+---@field displayStyle? SelectionDisplayStyle The display type of the aspect.
+---@field options? string[]|SelectionOption[] The available options.
+SelectionAspectCreate = {}
+
+---Creates a new SelectionAspect
+---@param options SelectionAspectCreate
+---@return SelectionAspect aspect The Aspect
 function settings.SelectionAspect.create(options) end
 
+function settings.SelectionAspect:addOption(option) end
+
+function settings.SelectionAspect:addOption(option, tooltip) end
 settings.MultiSelectionAspect = {}
 function settings.MultiSelectionAspect.create(options) end
 
@@ -86,15 +113,15 @@ settings.StringDisplayStyle = {
 };
 
 ---@class StringAspectCreate : TypedAspectCreate<string>
----@field displayStyle? StringDisplayStyle The display type of the aspect
----@field historyId? string The history id of the aspect
+---@field displayStyle? StringDisplayStyle The display type of the aspect.
+---@field historyId? string The history id of the aspect.
 ---@field valueAcceptor? function string (oldvalue: string, newValue: string)
 ---@field showToolTipOnLabel? boolean
 ---@field displayFilter? function string (value: string)
 ---@field placeHolderText? string
 ---@field acceptRichText? boolean
 ---@field autoApplyOnEditingFinished? boolean
----@field elideMode? Qt.TextElideMode The elide mode of the aspect
+---@field elideMode? Qt.TextElideMode The elide mode of the aspect.
 StringAspectCreate = {}
 
 ---@class StringAspect : TypedAspect<string>
@@ -116,9 +143,9 @@ settings.Kind = {
 };
 
 ---@class FilePathAspectCreate
----@field expectedKind? Kind The kind of path we want to select
----@field historyId? string The history id of the aspect
----@field defaultPath? FilePath The default path of the aspect
+---@field expectedKind? Kind The kind of path we want to select.
+---@field historyId? string The history id of the aspect.
+---@field defaultPath? FilePath The default path of the aspect.
 ---@field promptDialogFilter? string
 ---@field promptDialogTitle? string
 ---@field commandVersionArguments? string[]
@@ -136,8 +163,8 @@ settings.Kind = {
 FilePathAspectCreate = {}
 
 ---@class FilePathAspect
----@field expandedValue FilePath The expanded value of the aspect
----@field defaultPath FilePath The default path of the aspect
+---@field expandedValue FilePath The expanded value of the aspect.
+---@field defaultPath FilePath The default path of the aspect.
 settings.FilePathAspect = {}
 
 ---Create a new FilePathAspect
@@ -146,7 +173,7 @@ settings.FilePathAspect = {}
 function settings.FilePathAspect.create(options) end
 
 ---Set the value of the aspect
----@param value string|FilePath The value to set
+---@param value string|FilePath The value to set.
 function settings.FilePathAspect:setValue(value) end
 
 settings.IntegerAspect = {}
@@ -175,11 +202,11 @@ settings.OptionsPage = {}
 ---@field displayName string
 ---@field categoryId string
 ---@field displayCategory string
----@field categoryIconPath string
+---@field categoryIconPath string|FilePath
 ---@field aspectContainer AspectContainer
 OptionsPageCreate = {}
 
----Creates a new OptionsPage
+---Creates a new OptionsPage.
 ---@param options OptionsPageCreate
 ---@return OptionsPage
 function settings.OptionsPage.create(options) end

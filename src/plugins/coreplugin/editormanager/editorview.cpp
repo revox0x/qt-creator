@@ -324,6 +324,23 @@ void EditorView::focusInEvent(QFocusEvent *)
     EditorManagerPrivate::setCurrentView(this);
 }
 
+bool EditorView::event(QEvent *e)
+{
+    if (e->type() == QEvent::NativeGesture) {
+        auto ev = static_cast<QNativeGestureEvent *>(e);
+        if (ev->gestureType() == Qt::SwipeNativeGesture) {
+            if (ev->value() > 0 && canGoBack()) { // swipe from right to left == go back
+                goBackInNavigationHistory();
+                return true;
+            } else if (ev->value() <= 0 && canGoForward()) {
+                goForwardInNavigationHistory();
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 void EditorView::addEditor(IEditor *editor)
 {
     if (m_editors.contains(editor))
@@ -381,9 +398,7 @@ void EditorView::fillListContextMenu(QMenu *menu) const
     IEditor *editor = currentEditor();
     DocumentModel::Entry *entry = editor ? DocumentModel::entryForDocument(editor->document())
                                          : nullptr;
-    EditorManager::addSaveAndCloseEditorActions(menu, entry, editor);
-    menu->addSeparator();
-    EditorManager::addNativeDirAndOpenWithActions(menu, entry);
+    EditorManager::addContextMenuActions(menu, entry, editor);
 }
 
 void EditorView::splitHorizontally()
@@ -534,29 +549,27 @@ void EditorView::cutForwardNavigationHistory()
 void EditorView::updateNavigatorActions()
 {
     static const int MAX_ITEMS = 20;
-    FilePath last;
+    QString lastDisplay;
     m_backMenu->clear();
     int count = 0;
     for (int i = m_currentNavigationHistoryPosition - 1; i >= 0; i--) {
         const EditLocation &loc = m_navigationHistory.at(i);
-        if (loc.filePath != last) {
-            m_backMenu->addAction(loc.displayName(), this, [this, i] { goToNavigationHistory(i); });
-            last = loc.filePath;
+        if (!loc.displayName().isEmpty() && loc.displayName() != lastDisplay) {
+            lastDisplay = loc.displayName();
+            m_backMenu->addAction(lastDisplay, this, [this, i] { goToNavigationHistory(i); });
             ++count;
             if (count >= MAX_ITEMS)
                 break;
         }
     }
-    last = {};
+    lastDisplay.clear();
     m_forwardMenu->clear();
     count = 0;
     for (int i = m_currentNavigationHistoryPosition + 1; i < m_navigationHistory.size(); i++) {
         const EditLocation &loc = m_navigationHistory.at(i);
-        if (loc.filePath != last) {
-            m_forwardMenu->addAction(loc.displayName(), this, [this, i] {
-                goToNavigationHistory(i);
-            });
-            last = loc.filePath;
+        if (!loc.displayName().isEmpty() && loc.displayName() != lastDisplay) {
+            lastDisplay = loc.displayName();
+            m_forwardMenu->addAction(lastDisplay, this, [this, i] { goToNavigationHistory(i); });
             ++count;
             if (count >= MAX_ITEMS)
                 break;

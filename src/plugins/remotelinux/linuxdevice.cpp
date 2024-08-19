@@ -305,12 +305,6 @@ public:
     LinuxDevicePrivate *m_dev;
 };
 
-class LinuxDeviceSettings : public DeviceSettings
-{
-public:
-    LinuxDeviceSettings() { displayName.setDefaultValue(Tr::tr("Remote Linux Device")); }
-};
-
 class LinuxDevicePrivate
 {
 public:
@@ -333,7 +327,6 @@ public:
     void queryOsType(std::function<RunResult(const CommandLine &)> run);
 
     void setDisconnected(bool disconnected);
-    bool disconnected() const;
     bool checkDisconnectedWithWarning();
 
     LinuxDevice *q = nullptr;
@@ -344,7 +337,6 @@ public:
 
     QReadWriteLock m_environmentCacheLock;
     std::optional<Environment> m_environmentCache;
-    bool m_disconnected = false;
 };
 
 void LinuxDevicePrivate::invalidateEnvironmentCache()
@@ -363,6 +355,9 @@ Environment LinuxDevicePrivate::getEnvironment()
     QWriteLocker writeLocker(&m_environmentCacheLock);
     if (m_environmentCache.has_value())
         return m_environmentCache.value();
+
+    if (q->disconnected())
+        return {};
 
     Process getEnvProc;
     getEnvProc.setCommand(CommandLine{q->filePath("env")});
@@ -705,6 +700,14 @@ void SshProcessInterfacePrivate::start()
                 this, &SshProcessInterfacePrivate::handleDisconnected);
         auto linuxDevice = std::dynamic_pointer_cast<const LinuxDevice>(m_device);
         QTC_ASSERT(linuxDevice, handleDone(); return);
+        if (linuxDevice->isDisconnected()) {
+            emit q->done(
+                {-1,
+                 QProcess::CrashExit,
+                 QProcess::FailedToStart,
+                 Tr::tr("Device \"%1\" is disconnected.").arg(linuxDevice->displayName())});
+            return;
+        }
         linuxDevice->connectionAccess()
             ->attachToSharedConnection(m_connectionHandle.get(), m_sshParameters);
     } else {
@@ -1006,12 +1009,12 @@ private:
 // LinuxDevice
 
 LinuxDevice::LinuxDevice()
-    : IDevice(std::make_unique<LinuxDeviceSettings>())
-    , d(new LinuxDevicePrivate(this))
+    : d(new LinuxDevicePrivate(this))
 {
     setFileAccess(&d->m_fileAccess);
     setDisplayType(Tr::tr("Remote Linux"));
     setOsType(OsTypeLinux);
+    setDefaultDisplayName(Tr::tr("Remote Linux Device"));
 
     setupId(IDevice::ManuallyAdded, Utils::Id());
     setType(Constants::GenericLinuxOsType);
@@ -1020,6 +1023,8 @@ LinuxDevice::LinuxDevice()
     SshParameters sshParams;
     sshParams.timeout = 10;
     setSshParameters(sshParams);
+
+    disconnected.setSettingsKey("Disconnected");
 
     addDeviceAction({Tr::tr("Deploy Public Key..."), [](const IDevice::Ptr &device, QWidget *parent) {
         if (auto d = Internal::PublicKeyDeploymentDialog::createDialog(device, parent)) {
@@ -1072,15 +1077,6 @@ void LinuxDevice::_setOsType(Utils::OsType osType)
 LinuxDevice::~LinuxDevice()
 {
     delete d;
-}
-
-IDevice::Ptr LinuxDevice::clone() const
-{
-    IDevice::Ptr clone = IDevice::clone();
-    Ptr linuxClone = std::dynamic_pointer_cast<LinuxDevice>(clone);
-    QTC_ASSERT(linuxClone, return clone);
-    linuxClone->d->setDisconnected(d->disconnected());
-    return clone;
 }
 
 IDeviceWidget *LinuxDevice::createWidget()
@@ -1144,6 +1140,7 @@ LinuxDevicePrivate::LinuxDevicePrivate(LinuxDevice *parent)
 
 LinuxDevicePrivate::~LinuxDevicePrivate()
 {
+    QMutexLocker locker(&m_shellMutex);
     auto closeShell = [this] {
         m_shellThread.quit();
         m_shellThread.wait();
@@ -1168,19 +1165,14 @@ void LinuxDevicePrivate::queryOsType(std::function<RunResult(const CommandLine &
 
 void LinuxDevicePrivate::setDisconnected(bool disconnected)
 {
-    if (disconnected == m_disconnected)
+    if (disconnected == q->disconnected())
         return;
 
-    m_disconnected = disconnected;
+    q->disconnected.setValue(disconnected);
 
-    if (m_disconnected)
+    if (disconnected)
         m_handler->closeShell();
 
-}
-
-bool LinuxDevicePrivate::disconnected() const
-{
-    return m_disconnected;
 }
 
 void LinuxDevicePrivate::checkOsType()
@@ -1191,8 +1183,10 @@ void LinuxDevicePrivate::checkOsType()
 // Call me with shell mutex locked
 bool LinuxDevicePrivate::setupShell(const SshParameters &sshParameters, bool announce)
 {
-    if (m_handler->isRunning(sshParameters))
+    if (m_handler->isRunning(sshParameters)) {
+        setDisconnected(false);
         return true;
+    }
 
     invalidateEnvironmentCache();
 
@@ -1250,7 +1244,7 @@ void LinuxDevicePrivate::unannounceConnectionAttempt()
 
 bool LinuxDevicePrivate::checkDisconnectedWithWarning()
 {
-    if (!disconnected())
+    if (!q->disconnected())
         return false;
 
     QMetaObject::invokeMethod(Core::ICore::infoBar(), [id = q->id(), name = q->displayName()] {
@@ -1309,7 +1303,7 @@ static FilePaths dirsToCreate(const FilesToTransfer &files)
 
 static QByteArray transferCommand(bool link)
 {
-    return link ? "ln -s" : "put";
+    return link ? "ln -s" : "put -R";
 }
 
 class SshTransferInterface : public FileTransferInterface
@@ -1530,7 +1524,7 @@ private:
             const auto batchIt = m_batches.begin();
             for (auto filesIt = batchIt->cbegin(); filesIt != batchIt->cend(); ++filesIt) {
                 const FileToTransfer fixedFile = fixLocalFileOnWindows(*filesIt, options);
-                options << fixedLocalPath(fixedFile.m_source);
+                options << fixedFile.m_source.path();
             }
             options << fixedRemotePath(batchIt.key(), userAtHost());
             m_batches.erase(batchIt);
@@ -1558,11 +1552,6 @@ private:
         FileToTransfer fixedFile = file;
         fixedFile.m_source = fixedFile.m_source.withNewPath(localFilePath);
         return fixedFile;
-    }
-
-    QString fixedLocalPath(const FilePath &file) const
-    {
-        return file.isDir() && file.path().back() != '/' ? file.path() + '/' : file.path();
     }
 
     QString fixedRemotePath(const FilePath &file, const QString &remoteHost) const
@@ -1621,7 +1610,7 @@ private:
             const expected_str<void> result = async.result();
             if (result)
                 emit progress(
-                    Tr::tr("Created directory: %1\n").arg(iteratorParentDirs->toUserOutput()));
+                    Tr::tr("Created directory: \"%1\".\n").arg(iteratorParentDirs->toUserOutput()));
             else
                 emit progress(result.error());
         };
@@ -1640,7 +1629,8 @@ private:
             ++counter;
 
             if (result) {
-                emit progress(Tr::tr("Copied %1/%2: %3 -> %4\n")
+                //: %1/%2 = progress in the form 4/15, %3 and %4 = source and target file paths
+                emit progress(Tr::tr("Copied %1/%2: \"%3\" -> \"%4\".\n")
                                   .arg(counter)
                                   .arg(m_setup.m_files.size())
                                   .arg(iterator->m_source.toUserOutput())
@@ -1650,21 +1640,21 @@ private:
             }
         };
 
-        const Group group{
-            Group{
-                parallelIdealThreadCountLimit,
+        const Group recipe {
+            For {
                 iteratorParentDirs,
+                parallelIdealThreadCountLimit,
                 AsyncTask<expected_str<void>>(onCreateDirSetup, onCreateDirDone),
             },
-            Group{
-                parallelLimit(2),
+            For {
                 iterator,
+                parallelLimit(2),
                 counterStorage,
                 AsyncTask<expected_str<void>>(onCopySetup, onCopyDone),
             },
         };
 
-        m_taskTree.start(group, {}, [this](DoneWith result) {
+        m_taskTree.start(recipe, {}, [this](DoneWith result) {
             ProcessResultData resultData;
             if (result != DoneWith::Success) {
                 resultData.m_exitCode = -1;
@@ -1718,11 +1708,7 @@ QString LinuxDevice::deviceStateToString() const
 
 bool LinuxDevice::isDisconnected() const
 {
-    return d->disconnected();
-}
-void LinuxDevice::setDisconnected(bool disconnected)
-{
-    d->setDisconnected(disconnected);
+    return disconnected();
 }
 
 bool LinuxDevice::tryToConnect()

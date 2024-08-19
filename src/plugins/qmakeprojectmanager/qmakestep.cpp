@@ -298,13 +298,12 @@ Tasking::GroupItem QMakeStep::runRecipe()
         m_needToRunQMake = false;
     };
 
-    QList<GroupItem> processList = {onGroupSetup(onSetup),
-                                    onGroupDone(onDone, CallDoneIf::Success),
-                                    ProcessTask(onQMakeSetup, onProcessDone)};
-    if (m_runMakeQmake)
-        processList << ProcessTask(onMakeQMakeSetup, onProcessDone);
-
-    return Group(processList);
+    return Group {
+        onGroupSetup(onSetup),
+        ProcessTask(onQMakeSetup, onProcessDone),
+        m_runMakeQmake ? ProcessTask(onMakeQMakeSetup, onProcessDone) : nullItem,
+        onGroupDone(onDone, CallDoneIf::Success)
+    };
 }
 
 void QMakeStep::setForced(bool b)
@@ -648,12 +647,6 @@ void QMakeStep::updateAbiWidgets()
                             break;
                         }
                     }
-                }
-            } else if (qtVersion->hasAbi(Abi::DarwinOS) && !isIos(target()->kit()) && HostOsInfo::isRunningUnderRosetta()) {
-                // Automatically select arm64 when running under Rosetta
-                for (const Abi &abi : abis) {
-                    if (abi.architecture() == Abi::ArmArchitecture)
-                        selectedAbis.append(abi.param());
                 }
             }
         }

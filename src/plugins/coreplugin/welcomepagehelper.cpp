@@ -118,6 +118,10 @@ static const TextFormat &buttonTF(Button::Role role, WidgetState state)
     static const TextFormat smallLinkHoveredTF
         {Theme::Token_Text_Accent, smallLinkDefaultTF.uiElement,
          smallLinkDefaultTF.drawTextFlags};
+    static const TextFormat tagDefaultTF
+        {Theme::Token_Text_Muted, StyleHelper::UiElement::UiElementLabelMedium};
+    static const TextFormat tagHoverTF
+        {Theme::Token_Text_Default, tagDefaultTF.uiElement};
 
     switch (role) {
     case Button::MediumPrimary: return mediumPrimaryTF;
@@ -128,6 +132,8 @@ static const TextFormat &buttonTF(Button::Role role, WidgetState state)
                                              : smallListCheckedTF;
     case Button::SmallLink: return (state == WidgetStateDefault) ? smallLinkDefaultTF
                                              : smallLinkHoveredTF;
+    case Button::Tag: return (state == WidgetStateDefault) ? tagDefaultTF
+                                             : tagHoverTF;
     }
     return mediumPrimaryTF;
 }
@@ -218,6 +224,13 @@ void Button::paintEvent(QPaintEvent *event)
     }
     case SmallLink:
         break;
+    case Tag: {
+        const QBrush fill(hovered ? creatorColor(Theme::Token_Foreground_Subtle)
+                                  : QBrush(Qt::NoBrush));
+        const QPen outline(hovered ? QPen(Qt::NoPen) : creatorColor(Theme::Token_Stroke_Subtle));
+        drawCardBackground(&p, bgR, fill, outline, brRectRounding);
+        break;
+    }
     }
 
     if (!m_pixmap.isNull()) {
@@ -244,6 +257,10 @@ void Button::setPixmap(const QPixmap &pixmap)
 
 void Button::updateMargins()
 {
+    if (m_role == Tag) {
+        setContentsMargins(HPaddingXs, VPaddingXxs, HPaddingXs, VPaddingXxs);
+        return;
+    }
     const bool tokenSizeS = m_role == MediumPrimary || m_role == MediumSecondary
                             || m_role == SmallList || m_role == SmallLink;
     const int gap = tokenSizeS ? HGapS : HGapXs;
@@ -281,7 +298,7 @@ constexpr TextFormat searchBoxPlaceholderTF
 
 static const QPixmap &searchBoxIcon()
 {
-    static const QPixmap icon = Icon({{FilePath::fromString(":/core/images/search"),
+    static const QPixmap icon = Icon({{FilePath::fromString(":/core/images/search.png"),
                                        Theme::Token_Text_Muted}}, Icon::Tint).pixmap();
     return icon;
 }
@@ -366,7 +383,7 @@ constexpr TextFormat ComboBoxTf
 
 static const QPixmap &comboBoxIcon()
 {
-    static const QPixmap icon = Icon({{FilePath::fromString(":/core/images/expandarrow"),
+    static const QPixmap icon = Icon({{FilePath::fromString(":/core/images/expandarrow.png"),
                                        ComboBoxTf.themeColor}}, Icon::Tint).pixmap();
     return icon;
 }
@@ -446,7 +463,7 @@ GridView::GridView(QWidget *parent)
 
 void GridView::leaveEvent(QEvent *)
 {
-    QHoverEvent hev(QEvent::HoverLeave, QPointF(), QPointF());
+    QHoverEvent hev(QEvent::HoverLeave, QPointF(), QPointF(), QPointF());
     viewportEvent(&hev); // Seemingly needed to kill the hover paint.
 }
 
@@ -834,7 +851,6 @@ void ListItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opti
     const QFont tagsLabelFont = tagsLabelTF.font();
     const QFontMetrics tagsLabelFM(tagsLabelFont);
     const QFont descriptionFont = descriptionTF.font();
-    const QFontMetrics descriptionFM(descriptionFont);
 
     const QRect bgRGlobal = option.rect.adjusted(0, 0, -ExVPaddingGapXl, -ExVPaddingGapXl);
     const QRect bgR = bgRGlobal.translated(-option.rect.topLeft());

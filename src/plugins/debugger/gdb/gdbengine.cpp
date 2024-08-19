@@ -30,7 +30,9 @@
 #include <coreplugin/messagebox.h>
 
 #include <projectexplorer/devicesupport/idevice.h>
+#include <projectexplorer/project.h>
 #include <projectexplorer/projectexplorer.h>
+#include <projectexplorer/projectmanager.h>
 #include <projectexplorer/taskhub.h>
 
 #include <utils/algorithm.h>
@@ -468,7 +470,7 @@ void GdbEngine::handleAsyncOutput(const QStringView asyncClass, const GdbMi &res
         Module module;
         module.startAddress = 0;
         module.endAddress = 0;
-        module.hostPath = Utils::FilePath::fromString(result["host-name"].data());
+        module.hostPath = Utils::FilePath::fromUserInput(result["host-name"].data());
         const QString target = result["target-name"].data();
         module.modulePath = runParameters().inferior.command.executable().withNewPath(target);
         module.moduleName = module.hostPath.baseName();
@@ -673,6 +675,8 @@ void GdbEngine::interruptInferior()
     } else {
         showStatusMessage(Tr::tr("Stop requested..."), 5000);
         showMessage("TRYING TO INTERRUPT INFERIOR");
+        // Ctrl+C events are only handled properly for console applications on Windows
+        // when gdb debugs a GUI application the CTRL+C events are not handled
         if (HostOsInfo::isWindowsHost() && !m_isQnxGdb) {
             IDevice::ConstPtr dev = device();
             QTC_ASSERT(dev, notifyInferiorStopFailed(); return);
@@ -2090,8 +2094,10 @@ QString GdbEngine::breakpointLocation(const BreakpointParameters &data)
         return addressSpec(data.address);
 
     BreakpointPathUsage usage = data.pathUsage;
-    if (usage == BreakpointPathUsageEngineDefault)
-        usage = BreakpointUseShortPath;
+    if (usage == BreakpointPathUsageEngineDefault) {
+        ProjectExplorer::Project *project = ProjectManager::projectForFile(data.fileName);
+        usage = project ? BreakpointUseFullPath : BreakpointUseShortPath;
+    }
 
     const QString fileName = usage == BreakpointUseFullPath
         ? data.fileName.path() : breakLocation(data.fileName);
@@ -2104,8 +2110,10 @@ QString GdbEngine::breakpointLocation(const BreakpointParameters &data)
 QString GdbEngine::breakpointLocation2(const BreakpointParameters &data)
 {
     BreakpointPathUsage usage = data.pathUsage;
-    if (usage == BreakpointPathUsageEngineDefault)
-        usage = BreakpointUseShortPath;
+    if (usage == BreakpointPathUsageEngineDefault) {
+        ProjectExplorer::Project *project = ProjectManager::projectForFile(data.fileName);
+        usage = project ? BreakpointUseFullPath : BreakpointUseShortPath;
+    }
 
     const QString fileName = usage == BreakpointUseFullPath
         ? data.fileName.path() : breakLocation(data.fileName);
@@ -3758,7 +3766,7 @@ bool GdbEngine::handleCliDisassemblerResult(const QString &output, DisassemblerA
     for (const QString &line : lineList)
         dlines.appendUnparsed(line);
 
-    QVector<DisassemblerLine> lines = dlines.data();
+    QList<DisassemblerLine> lines = dlines.data();
 
     using LineMap = QMap<quint64, LineData>;
     LineMap lineMap;
@@ -4323,7 +4331,7 @@ void GdbEngine::interruptLocalInferior(qint64 pid)
         proc.setEnvironment(env);
         proc.start();
         proc.waitForFinished();
-    } else if (interruptProcess(pid, GdbEngineType, &errorMessage)) {
+    } else if (interruptProcess(pid, &errorMessage)) {
         showMessage("Interrupted " + QString::number(pid));
     } else {
         showMessage(errorMessage, LogError);

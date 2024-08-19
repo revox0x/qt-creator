@@ -197,9 +197,6 @@ QtcPlugin {
             "ifunctionhintproposalmodel.h",
             "keywordscompletionassist.cpp",
             "keywordscompletionassist.h",
-            "textdocumentmanipulator.cpp",
-            "textdocumentmanipulator.h",
-            "textdocumentmanipulatorinterface.h",
         ]
     }
 
@@ -222,8 +219,6 @@ QtcPlugin {
             "snippetprovider.h",
             "snippetscollection.cpp",
             "snippetscollection.h",
-            "snippetssettings.cpp",
-            "snippetssettings.h",
             "snippetssettingspage.cpp",
             "snippetssettingspage.h",
         ]

@@ -141,8 +141,11 @@
             \li  Switch to \uicontrol Projects mode
             \li  Ctrl+5
         \row
-            \li  Switch to \uicontrol Help mode
+            \li  Switch to \uicontrol Extensions mode
             \li  Ctrl+6
+        \row
+            \li  Switch to \uicontrol Help mode
+            \li  Ctrl+7
         \row
             \li  Toggle \uicontrol{Issues}
             \li  Alt+1 (Cmd+1 on \macos)
@@ -570,7 +573,7 @@
             \li  Open project
             \li  Ctrl+Shift+O
         \row
-            \li  Select the \l{glossary-buildandrun-kit}{kit} to build and run your project with
+            \li  Select the \l{Kits}{kit} to build and run your project with
             \li  Ctrl+T
         \row
             \li  Run

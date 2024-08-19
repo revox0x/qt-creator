@@ -499,6 +499,12 @@ void DebuggerRunTool::start()
             case LldbEngineType:
                 m_engines << createLldbEngine();
                 break;
+            case GdbDapEngineType:
+                m_engines << createDapEngine(ProjectExplorer::Constants::DAP_GDB_DEBUG_RUN_MODE);
+                break;
+            case LldbDapEngineType:
+                m_engines << createDapEngine(ProjectExplorer::Constants::DAP_LLDB_DEBUG_RUN_MODE);
+                break;
             case UvscEngineType:
                 m_engines << createUvscEngine();
                 break;
@@ -543,11 +549,11 @@ void DebuggerRunTool::start()
     for (auto engine : m_engines) {
         engine->setRunParameters(m_runParameters);
         engine->setRunId(d->runId);
-        engine->setRunTool(this);
         for (auto companion : m_engines) {
             if (companion != engine)
                 engine->addCompanionEngine(companion);
         }
+        engine->setRunTool(this);
         if (!first)
             engine->setSecondaryEngine();
         auto rc = runControl();
@@ -569,9 +575,11 @@ void DebuggerRunTool::start()
             connect(engine, &DebuggerEngine::attachToCoreRequested, this, [this](const QString &coreFile) {
                 auto rc = new RunControl(ProjectExplorer::Constants::DEBUG_RUN_MODE);
                 rc->copyDataFromRunControl(runControl());
+                rc->resetDataForAttachToCore();
                 auto name = QString(Tr::tr("%1 - Snapshot %2").arg(runControl()->displayName()).arg(++d->snapshotCounter));
                 auto debugger = new DebuggerRunTool(rc);
                 debugger->setStartMode(AttachToCore);
+                debugger->setCloseMode(DetachAtClose);
                 debugger->setRunControlName(name);
                 debugger->setCoreFilePath(FilePath::fromString(coreFile), true);
                 debugger->startRunControl();
@@ -1101,6 +1109,7 @@ DebuggerRunWorkerFactory::DebuggerRunWorkerFactory()
     addSupportedRunMode(ProjectExplorer::Constants::DEBUG_RUN_MODE);
     addSupportedRunMode(ProjectExplorer::Constants::DAP_CMAKE_DEBUG_RUN_MODE);
     addSupportedRunMode(ProjectExplorer::Constants::DAP_GDB_DEBUG_RUN_MODE);
+    addSupportedRunMode(ProjectExplorer::Constants::DAP_LLDB_DEBUG_RUN_MODE);
     addSupportedDeviceType(ProjectExplorer::Constants::DESKTOP_DEVICE_TYPE);
     addSupportedDeviceType("DockerDeviceType");
 

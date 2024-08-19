@@ -3,9 +3,11 @@
 
 #include "dockerapi.h"
 
+#include "dockersettings.h"
 #include "dockertr.h"
 
 #include <coreplugin/progressmanager/progressmanager.h>
+
 #include <utils/async.h>
 #include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
@@ -52,6 +54,26 @@ bool DockerApi::canConnect()
     process.waitForFinished();
 
     return result;
+}
+
+bool DockerApi::isContainerRunning(const QString &containerId)
+{
+    Process process;
+    FilePath dockerExe = dockerClient();
+    if (dockerExe.isEmpty() || !dockerExe.isExecutableFile())
+        return false;
+
+    process.setCommand(
+        CommandLine(dockerExe, QStringList{"inspect", "--format", "{{.State.Running}}", containerId}));
+    process.runBlocking();
+
+    if (process.result() == ProcessResult::FinishedWithSuccess) {
+        QString output = process.readAllStandardOutput().trimmed();
+        if (output == "true")
+            return true;
+    }
+
+    return false;
 }
 
 void DockerApi::checkCanConnect(bool async)

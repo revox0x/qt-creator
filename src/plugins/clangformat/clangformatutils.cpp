@@ -20,6 +20,7 @@
 
 #include <utils/qtcassert.h>
 #include <utils/expected.h>
+#include <utils/fileutils.h>
 
 #include <QCryptographicHash>
 #include <QLoggingCategory>
@@ -113,7 +114,11 @@ clang::format::FormatStyle calculateQtcStyle()
     style.IndentWrappedFunctionNames = false;
     style.JavaScriptQuotes = FormatStyle::JSQS_Leave;
     style.JavaScriptWrapImports = true;
+#if LLVM_VERSION_MAJOR >= 19
+    style.KeepEmptyLines = {false, false, false};
+#else
     style.KeepEmptyLinesAtTheStartOfBlocks = false;
+#endif
     // Do not add QT_BEGIN_NAMESPACE/QT_END_NAMESPACE as this will indent lines in between.
     style.MacroBlockBegin = "";
     style.MacroBlockEnd = "";
@@ -392,25 +397,30 @@ Utils::FilePath filePathToCurrentSettings(const TextEditor::ICodeStylePreference
            / QLatin1String(Constants::SETTINGS_FILE_NAME);
 }
 
-static QString s_errorMessage;
 Utils::expected_str<void> parseConfigurationContent(const std::string &fileContent,
-                                                    clang::format::FormatStyle &style)
+                                                    clang::format::FormatStyle &style,
+                                                    bool allowUnknownOptions)
 {
-    auto diagHandler = [](const llvm::SMDiagnostic &diag, void * /*context*/) {
-        s_errorMessage = QString::fromStdString(diag.getMessage().str()) + " "
-                         + QString::number(diag.getLineNo()) + ":"
-                         + QString::number(diag.getColumnNo());
+    llvm::SourceMgr::DiagHandlerTy diagHandler = [](const llvm::SMDiagnostic &diag, void *context) {
+        QString *errorMessage = reinterpret_cast<QString *>(context);
+        *errorMessage = QString::fromStdString(diag.getMessage().str()) + " "
+                        + QString::number(diag.getLineNo()) + ":"
+                        + QString::number(diag.getColumnNo());
     };
 
+    QString errorMessage;
     style.Language = clang::format::FormatStyle::LK_Cpp;
-    const std::error_code error = parseConfiguration(llvm::MemoryBufferRef(fileContent, "YAML"),
-                                                     &style,
-                                                     false,
-                                                     diagHandler,
-                                                     nullptr);
+    const std::error_code error = parseConfiguration(
+        llvm::MemoryBufferRef(fileContent, "YAML"),
+        &style,
+        allowUnknownOptions,
+        diagHandler,
+        &errorMessage);
 
+    errorMessage = errorMessage.trimmed().isEmpty() ? QString::fromStdString(error.message())
+                                                    : errorMessage;
     if (error)
-        return make_unexpected(s_errorMessage);
+        return make_unexpected(errorMessage);
     return {};
 }
 
@@ -418,7 +428,7 @@ Utils::expected_str<void> parseConfigurationFile(const Utils::FilePath &filePath
                                                  clang::format::FormatStyle &style)
 {
     return parseConfigurationContent(filePath.fileContents().value_or(QByteArray()).toStdString(),
-                                     style);
+                                     style, true);
 }
 
 } // namespace ClangFormat

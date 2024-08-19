@@ -16,10 +16,10 @@ def main():
     if not startedWithoutPluginError():
         return
     invokeMenuItem("Edit", "Preferences...")
-    __checkKits__()
+    qmakeFound = __checkKits__()
     clickButton(waitForObject(":Options.Cancel_QPushButton"))
     invokeMenuItem("File", "Exit")
-    __checkCreatedSettings__(emptySettings)
+    __checkCreatedSettings__(emptySettings, qmakeFound)
 
 def __createMinimumIni__(emptyParent):
     qtProjDir = os.path.join(emptyParent, "QtProject")
@@ -61,6 +61,10 @@ def __checkKits__():
         test.log(str(genericDebuggers))
     # check Qt versions
     qmakePath = which("qmake")
+    if qmakePath and (not "Using Qt version" in
+                      getOutputFromCmdline([qmakePath, "--version"], acceptedError=1)):
+        # ignore dysfunctional qmake, e.g. incomplete qtchooser
+        qmakePath = None
     foundQt = []
     clickOnTab(":Options.qt_tabwidget_tabbar_QTabBar", "Qt Versions")
     __iterateTree__(":qtdirList_QTreeView", __qtFunc__, foundQt, qmakePath)
@@ -71,6 +75,7 @@ def __checkKits__():
     # check kits
     clickOnTab(":Options.qt_tabwidget_tabbar_QTabBar", "Kits")
     __iterateTree__(":BuildAndRun_QTreeView", __kitFunc__, foundQt, foundCompilerNames)
+    return qmakePath != None
 
 def __processSubItems__(treeObjStr, section, parModelIndexStr, doneItems,
                         additionalFunc, *additionalParameters):
@@ -108,7 +113,7 @@ def __iterateTree__(treeObjStr, additionalFunc, *additionalParameters):
 
 def __compFunc__(it, foundComp, foundCompNames):
     # skip sub section items (will continue on its children)
-    if str(it) == "C" or str(it) == "C++":
+    if str(it) == "C/C++":
         return
     try:
         waitFor("object.exists(':Path.Utils_BaseValidatingLineEdit')", 1000)
@@ -169,17 +174,12 @@ def __kitFunc__(it, foundQt, foundCompNames):
     test.compare(it, "Desktop (default)", "Verifying whether default Desktop kit has been created.")
     if foundQt:
         test.compare(qtVersionStr, foundQt, "Verifying if Qt versions match.")
-    cCompilerCombo = findObject(":CCompiler:_QComboBox")
-    test.compare(cCompilerCombo.enabled, cCompilerCombo.count > 1,
-                 "Verifying whether C compiler combo is enabled/disabled correctly.")
-    cppCompilerCombo = findObject(":CppCompiler:_QComboBox")
-    test.compare(cppCompilerCombo.enabled, cppCompilerCombo.count > 1,
-                 "Verifying whether C++ compiler combo is enabled/disabled correctly.")
+    compilerCombo = findObject(":Compiler:_QComboBox")
+    test.compare(compilerCombo.enabled, compilerCombo.count > 1,
+                 "Verifying whether compiler combo is enabled/disabled correctly.")
 
-    test.verify(str(cCompilerCombo.currentText) in foundCompNames,
-                "Verifying if one of the found C compilers had been set.")
-    test.verify(str(cppCompilerCombo.currentText) in foundCompNames,
-                "Verifying if one of the found C++ compilers had been set.")
+    test.verify(str(compilerCombo.currentText) in foundCompNames,
+                "Verifying if one of the found compilers had been set.")
     if currentSelectedTreeItem:
         foundWarningOrError = warningOrError.search(str(currentSelectedTreeItem.toolTip))
         if foundWarningOrError:
@@ -295,18 +295,11 @@ def __getExpectedDebuggers__():
 def __getCDB__():
     result = []
     possibleLocations = ["C:\\Program Files\\Debugging Tools for Windows (x64)",
-                         "C:\\Program Files (x86)\\Debugging Tools for Windows (x86)",
-                         "C:\\Program Files (x86)\\Windows Kits\\8.0\\Debuggers\\x86",
                          "C:\\Program Files (x86)\\Windows Kits\\8.0\\Debuggers\\x64",
-                         "C:\\Program Files\\Windows Kits\\8.0\\Debuggers\\x86",
                          "C:\\Program Files\\Windows Kits\\8.0\\Debuggers\\x64",
-                         "C:\\Program Files (x86)\\Windows Kits\\8.1\\Debuggers\\x86",
                          "C:\\Program Files (x86)\\Windows Kits\\8.1\\Debuggers\\x64",
-                         "C:\\Program Files\\Windows Kits\\8.1\\Debuggers\\x86",
                          "C:\\Program Files\\Windows Kits\\8.1\\Debuggers\\x64",
-                         "C:\\Program Files (x86)\\Windows Kits\\10\\Debuggers\\x86",
                          "C:\\Program Files (x86)\\Windows Kits\\10\\Debuggers\\x64",
-                         "C:\\Program Files\\Windows Kits\\10\\Debuggers\\x86",
                          "C:\\Program Files\\Windows Kits\\10\\Debuggers\\x64"]
     for cdbPath in possibleLocations:
         cdb = os.path.join(cdbPath, "cdb.exe")
@@ -377,7 +370,7 @@ def __lowerStrs__(iterable):
         else:
             yield it
 
-def __checkCreatedSettings__(settingsFolder):
+def __checkCreatedSettings__(settingsFolder, qmakeFound):
     waitForCleanShutdown()
     qtProj = os.path.join(settingsFolder, "QtProject")
     creatorFolder = os.path.join(qtProj, "qtcreator")
@@ -390,8 +383,9 @@ def __checkCreatedSettings__(settingsFolder):
              os.path.join(creatorFolder, "devices.xml"):0,
              os.path.join(creatorFolder, "helpcollection.qhc"):0,
              os.path.join(creatorFolder, "profiles.xml"):0,
-             os.path.join(creatorFolder, "qtversion.xml"):0,
              os.path.join(creatorFolder, "toolchains.xml"):0}
+    if qmakeFound:
+        files[os.path.join(creatorFolder, "qtversion.xml")] = 0
     for f in folders:
         test.verify(os.path.isdir(f),
                     "Verifying whether folder '%s' has been created." % os.path.basename(f))

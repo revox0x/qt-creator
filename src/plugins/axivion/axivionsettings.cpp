@@ -22,7 +22,6 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QRegularExpression>
-#include <QUuid>
 #include <QVBoxLayout>
 
 using namespace Core;
@@ -251,8 +250,8 @@ DashboardSettingsWidget::DashboardSettingsWidget(QWidget *parent, QPushButton *o
         m_valid.setValue(isValid());
         ok->setEnabled(m_valid());
     };
-    connect(&m_dashboardUrl, &BaseAspect::changed, this, checkValidity);
-    connect(&m_username, &BaseAspect::changed, this, checkValidity);
+    m_dashboardUrl.addOnChanged(this, checkValidity);
+    m_username.addOnChanged(this, checkValidity);
 }
 
 AxivionServer DashboardSettingsWidget::dashboardServer() const
@@ -261,7 +260,7 @@ AxivionServer DashboardSettingsWidget::dashboardServer() const
     if (m_id.isValid())
         result.id = m_id;
     else
-        result.id = Id::fromName(QUuid::createUuid().toByteArray());
+        result.id = Id::generate();
     result.dashboard = fixUrl(m_dashboardUrl());
     result.username = m_username();
     return result;
@@ -308,16 +307,17 @@ AxivionSettingsWidget::AxivionSettingsWidget()
     auto addButton = new QPushButton(Tr::tr("Add..."), this);
     m_edit = new QPushButton(Tr::tr("Edit..."), this);
     m_remove = new QPushButton(Tr::tr("Remove"), this);
-    Column {
-        Row {
-            Form {
-                Tr::tr("Default dashboard server"), m_dashboardServers, br
-            }, st,
-            Column { addButton, m_edit, st, m_remove },
+    Column{
+        Row{
+            Form{Tr::tr("Default dashboard server:"), m_dashboardServers, br},
+            st,
+            Column{addButton, m_edit, st, m_remove},
         },
-        Space(10), br,
-        Row { settings().highlightMarks }, st
-    }.attachTo(this);
+        Space(10),
+        br,
+        Row{settings().highlightMarks},
+        st}
+        .attachTo(this);
 
     connect(addButton, &QPushButton::clicked, this, [this] {
         // add an empty item unconditionally
@@ -357,10 +357,11 @@ void AxivionSettingsWidget::updateEnabledStates()
 void AxivionSettingsWidget::removeCurrentServerConfig()
 {
     const QString config = m_dashboardServers->currentData().value<AxivionServer>().displayString();
-    if (QMessageBox::question(ICore::dialogParent(), Tr::tr("Remove Server Configuration"),
-                              Tr::tr("Do you really want to remove the server configuration "
-                                     "\"%1\"?").arg(config))
-            != QMessageBox::Yes) {
+    if (QMessageBox::question(
+            ICore::dialogParent(),
+            Tr::tr("Remove Server Configuration"),
+            Tr::tr("Remove the server configuration \"%1\"?").arg(config))
+        != QMessageBox::Yes) {
         return;
     }
     m_dashboardServers->removeItem(m_dashboardServers->currentIndex());

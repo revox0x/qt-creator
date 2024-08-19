@@ -5,7 +5,6 @@
 #include "qmldesignertr.h"
 
 #include "coreplugin/iwizardfactory.h"
-#include "designmodecontext.h"
 #include "designmodewidget.h"
 #include "dynamiclicensecheck.h"
 #include "exception.h"
@@ -90,11 +89,25 @@
 
 static Q_LOGGING_CATEGORY(qmldesignerLog, "qtc.qmldesigner", QtWarningMsg)
 
+using namespace Core;
 using namespace QmlDesigner::Internal;
 
 namespace QmlDesigner {
 
 namespace Internal {
+
+class FullQDSFeatureProvider : public Core::IFeatureProvider
+{
+public:
+    QSet<Utils::Id> availableFeatures(Utils::Id) const override
+    {
+        return {"QmlDesigner.Wizards.FullQDS"};
+    }
+
+    QSet<Utils::Id> availablePlatforms() const override { return {}; }
+
+    QString displayNameForPlatform(Utils::Id) const override { return {}; }
+};
 
 class EnterpriseFeatureProvider : public Core::IFeatureProvider
 {
@@ -300,8 +313,6 @@ bool QmlDesignerPlugin::initialize(const QStringList & /*arguments*/, QString *e
     StudioQuickWidget::registerDeclarativeType();
     QmlDesignerBase::WindowManager::registerDeclarativeType();
 
-    if (checkEnterpriseLicense())
-        Core::IWizardFactory::registerFeatureProvider(new EnterpriseFeatureProvider);
     Exception::setWarnAboutException(!QmlDesignerPlugin::instance()
                                           ->settings()
                                           .value(DesignerSettingsKey::ENABLE_MODEL_EXCEPTION_OUTPUT)
@@ -343,6 +354,12 @@ void QmlDesignerPlugin::extensionsInitialized()
     registerCombinedTracedPoints(Constants::EVENT_STATE_ADDED,
                                  Constants::EVENT_STATE_CLONED,
                                  Constants::EVENT_STATE_ADDED_AND_CLONED);
+
+    if (checkEnterpriseLicense())
+        Core::IWizardFactory::registerFeatureProvider(new EnterpriseFeatureProvider);
+
+    if (!QmlDesignerBasePlugin::isLiteModeEnabled())
+        Core::IWizardFactory::registerFeatureProvider(new FullQDSFeatureProvider);
 }
 
 ExtensionSystem::IPlugin::ShutdownFlag QmlDesignerPlugin::aboutToShutdown()
@@ -380,10 +397,13 @@ static QString projectPath(const Utils::FilePath &fileName)
     return path;
 }
 
-void QmlDesignerPlugin::integrateIntoQtCreator(QWidget *modeWidget)
+void QmlDesignerPlugin::integrateIntoQtCreator(DesignModeWidget *modeWidget)
 {
-    auto context = new Internal::DesignModeContext(modeWidget);
-    Core::ICore::addContextObject(context);
+    const Context context(Constants::C_QMLDESIGNER, Constants::C_QT_QUICK_TOOLS_MENU);
+    IContext::attach(modeWidget, context, [modeWidget](const IContext::HelpCallback &callback) {
+        modeWidget->contextHelp(callback);
+    });
+
     Core::Context qmlDesignerMainContext(Constants::C_QMLDESIGNER);
     Core::Context qmlDesignerFormEditorContext(Constants::C_QMLFORMEDITOR);
     Core::Context qmlDesignerEditor3dContext(Constants::C_QMLEDITOR3D);
@@ -391,21 +411,13 @@ void QmlDesignerPlugin::integrateIntoQtCreator(QWidget *modeWidget)
     Core::Context qmlDesignerMaterialBrowserContext(Constants::C_QMLMATERIALBROWSER);
     Core::Context qmlDesignerAssetsLibraryContext(Constants::C_QMLASSETSLIBRARY);
 
-    context->context().add(qmlDesignerMainContext);
-    context->context().add(qmlDesignerFormEditorContext);
-    context->context().add(qmlDesignerEditor3dContext);
-    context->context().add(qmlDesignerNavigatorContext);
-    context->context().add(qmlDesignerMaterialBrowserContext);
-    context->context().add(qmlDesignerAssetsLibraryContext);
-    context->context().add(ProjectExplorer::Constants::QMLJS_LANGUAGE_ID);
-
     d->shortCutManager.registerActions(qmlDesignerMainContext, qmlDesignerFormEditorContext,
                                        qmlDesignerEditor3dContext, qmlDesignerNavigatorContext);
 
     const QStringList mimeTypes = { Utils::Constants::QML_MIMETYPE,
                                     Utils::Constants::QMLUI_MIMETYPE };
 
-    Core::DesignMode::registerDesignWidget(modeWidget, mimeTypes, context->context());
+    Core::DesignMode::registerDesignWidget(modeWidget, mimeTypes, context);
 
     connect(Core::DesignMode::instance(), &Core::DesignMode::actionsUpdated,
         &d->shortCutManager, &ShortCutManager::updateActions);
@@ -667,12 +679,11 @@ void QmlDesignerPlugin::enforceDelayedInitialize()
 
         FoundLicense license = checkLicense();
         if (license == FoundLicense::enterprise)
-            Core::ICore::appendAboutInformation(tr("License: Enterprise"));
+            Core::ICore::setPrependAboutInformation("License: Enterprise");
         else if (license == FoundLicense::professional)
-            Core::ICore::appendAboutInformation(tr("License: Professional"));
-
-        if (!licensee().isEmpty())
-            Core::ICore::appendAboutInformation(tr("Licensee: %1").arg(licensee()));
+            Core::ICore::setPrependAboutInformation("License: Professional");
+        else if (license == FoundLicense::community)
+            Core::ICore::setPrependAboutInformation("License: Community");
     }
 
     m_delayedInitialized = true;

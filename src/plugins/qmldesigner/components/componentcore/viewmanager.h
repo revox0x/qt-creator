@@ -9,7 +9,7 @@
 
 #include <coreplugin/icontext.h>
 
-#include <utils/fileutils.h>
+#include <utils/filepath.h>
 
 #include <QWidgetAction>
 
@@ -62,7 +62,6 @@ public:
     }
 
     QList<WidgetInfo> widgetInfos() const;
-    QWidget *widget(const QString & uniqueId) const;
 
     void disableWidgets();
     void enableWidgets();

@@ -22,7 +22,7 @@
 #include <utils/algorithm.h>
 #include <utils/buildablehelperlibrary.h>
 #include <utils/detailswidget.h>
-#include <utils/filepath.h>
+#include <utils/fileutils.h>
 #include <utils/hostosinfo.h>
 #include <utils/layoutbuilder.h>
 #include <utils/pathchooser.h>
@@ -1036,7 +1036,7 @@ void QtSettingsPageWidget::linkWithQt()
     dialog.exec();
     if (dialog.result() == QDialog::Accepted) {
         const std::optional<FilePath> settingsDir = settingsDirForQtDir(pathInput->baseDirectory(),
-                                                                        pathInput->rawFilePath());
+                                                                        pathInput->unexpandedFilePath());
         if (QTC_GUARD(settingsDir)) {
             const QString settingsFilePath = settingsFile(ICore::resourcePath().toString());
             QSettings settings(settingsFilePath, QSettings::IniFormat);

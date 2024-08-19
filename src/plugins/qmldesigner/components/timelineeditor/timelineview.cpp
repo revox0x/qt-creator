@@ -7,7 +7,6 @@
 #include "easingcurve.h"
 #include "timelineactions.h"
 #include "timelineconstants.h"
-#include "timelinecontext.h"
 #include "timelinewidget.h"
 
 #include "timelinegraphicsscene.h"
@@ -35,10 +34,6 @@
 #include <qmltimelinekeyframegroup.h>
 
 #include <coreplugin/icore.h>
-
-#include <utils/qtcassert.h>
-
-#include <designmodecontext.h>
 
 #include <utils/algorithm.h>
 #include <utils/qtcassert.h>
@@ -349,7 +344,7 @@ const QmlTimeline TimelineView::addNewTimeline()
                                        metaInfo.majorVersion(),
                                        metaInfo.minorVersion());
 #endif
-        timelineNode.validId();
+        timelineNode.ensureIdExists();
 
         timelineNode.variantProperty("startFrame").setValue(0);
         timelineNode.variantProperty("endFrame").setValue(1000);
@@ -390,7 +385,7 @@ ModelNode TimelineView::addAnimation(QmlTimeline timeline)
                                         metaInfo.minorVersion());
         animationNode.variantProperty("duration").setValue(timeline.duration());
 #endif
-        animationNode.validId();
+        animationNode.ensureIdExists();
 
         animationNode.variantProperty("from").setValue(timeline.startKeyframe());
         animationNode.variantProperty("to").setValue(timeline.endKeyframe());
@@ -644,12 +639,8 @@ void TimelineView::registerActions()
 
 TimelineWidget *TimelineView::createWidget()
 {
-    if (!m_timelineWidget) {
+    if (!m_timelineWidget)
         m_timelineWidget = new TimelineWidget(this);
-
-        auto *timelineContext = new TimelineContext(m_timelineWidget);
-        Core::ICore::addContextObject(timelineContext);
-    }
 
     return m_timelineWidget;
 }
@@ -659,7 +650,6 @@ WidgetInfo TimelineView::widgetInfo()
     return createWidgetInfo(createWidget(),
                             QStringLiteral("Timelines"),
                             WidgetInfo::BottomPane,
-                            0,
                             tr("Timeline"),
                             tr("Timeline view"));
 }

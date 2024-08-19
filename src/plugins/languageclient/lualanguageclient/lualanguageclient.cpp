@@ -15,6 +15,7 @@
 #include <extensionsystem/pluginmanager.h>
 
 #include <projectexplorer/project.h>
+#include <projectexplorer/projectmanager.h>
 
 #include <utils/commandline.h>
 #include <utils/layoutbuilder.h>
@@ -25,6 +26,44 @@ using namespace Utils;
 using namespace Core;
 using namespace TextEditor;
 using namespace ProjectExplorer;
+
+namespace {
+
+class RequestWithResponse : public LanguageServerProtocol::JsonRpcMessage
+{
+    sol::function m_callback;
+    LanguageServerProtocol::MessageId m_id;
+
+public:
+    RequestWithResponse(const QJsonObject &obj, const sol::function &cb)
+        : LanguageServerProtocol::JsonRpcMessage(obj)
+        , m_callback(cb)
+    {
+        m_id = LanguageServerProtocol::MessageId(obj["id"]);
+    }
+
+    std::optional<LanguageServerProtocol::ResponseHandler> responseHandler() const override
+    {
+        if (!m_id.isValid()) {
+            qWarning() << "Invalid 'id' in request:" << toJsonObject();
+            return std::nullopt;
+        }
+
+        return LanguageServerProtocol::ResponseHandler{
+            m_id, [callback = m_callback](const JsonRpcMessage &msg) {
+                if (!callback.valid()) {
+                    qWarning() << "Invalid Lua callback";
+                    return;
+                }
+
+                auto result = ::Lua::void_safe_call(
+                    callback, ::Lua::toTable(callback.lua_state(), msg.toJsonObject()));
+                QTC_CHECK_EXPECTED(result);
+            }};
+    }
+};
+
+} // anonymous namespace
 
 namespace LanguageClient::Lua {
 
@@ -73,14 +112,16 @@ public:
         }
         m_process = new Process;
         m_process->setProcessMode(ProcessMode::Writer);
-        connect(m_process,
-                &Process::readyReadStandardError,
-                this,
-                &LuaLocalSocketClientInterface::readError);
-        connect(m_process,
-                &Process::readyReadStandardOutput,
-                this,
-                &LuaLocalSocketClientInterface::readOutput);
+        connect(
+            m_process,
+            &Process::readyReadStandardError,
+            this,
+            &LuaLocalSocketClientInterface::readError);
+        connect(
+            m_process,
+            &Process::readyReadStandardOutput,
+            this,
+            &LuaLocalSocketClientInterface::readOutput);
         connect(m_process, &Process::started, this, [this]() {
             this->LocalSocketClientInterface::startImpl();
             emit started();
@@ -136,8 +177,10 @@ class LuaClientWrapper;
 class LuaClientSettings : public BaseSettings
 {
     std::weak_ptr<LuaClientWrapper> m_wrapper;
+    QObject guard;
 
 public:
+    LuaClientSettings(const LuaClientSettings &wrapper);
     LuaClientSettings(const std::weak_ptr<LuaClientWrapper> &wrapper);
     ~LuaClientSettings() override = default;
 
@@ -159,23 +202,25 @@ enum class TransportType { StdIO, LocalSocket };
 
 class LuaClientWrapper : public QObject
 {
+    Q_OBJECT
 public:
     TransportType m_transportType{TransportType::StdIO};
     std::function<expected_str<void>(CommandLine &)> m_cmdLineCallback;
+    std::function<expected_str<void>(QString &)> m_initOptionsCallback;
     AspectContainer *m_aspects{nullptr};
     QString m_name;
     Utils::Id m_settingsTypeId;
+    QString m_clientSettingsId;
     QString m_initializationOptions;
     CommandLine m_cmdLine;
     QString m_serverName;
     LanguageFilter m_languageFilter;
+    bool m_showInSettings;
     BaseSettings::StartBehavior m_startBehavior = BaseSettings::RequiresFile;
 
     std::optional<sol::protected_function> m_onInstanceStart;
     std::optional<sol::protected_function> m_startFailedCallback;
     QMap<QString, sol::protected_function> m_messageCallbacks;
-
-    QList<Client *> m_clients;
 
 public:
     static BaseSettings::StartBehavior startBehaviorFromString(const QString &str)
@@ -201,6 +246,23 @@ public:
                     return make_unexpected(QString("cmd callback did not return a table"));
                 return cmdFromTable(res.get<sol::table>());
             });
+
+        m_initOptionsCallback = addValue<QString>(
+            options,
+            "initializationOptions",
+            m_initializationOptions,
+            [](const sol::protected_function_result &res) -> expected_str<QString> {
+                if (res.get_type(0) == sol::type::table)
+                    return ::Lua::toJsonString(res.get<sol::table>());
+                else if (res.get_type(0) == sol::type::string)
+                    return res.get<QString>(0);
+                return make_unexpected(QString("init callback did not return a table or string"));
+            });
+
+        if (auto initOptionsTable = options.get<sol::optional<sol::table>>("initializationOptions"))
+            m_initializationOptions = ::Lua::toJsonString(*initOptionsTable);
+        else if (auto initOptionsString = options.get<sol::optional<QString>>("initializationOptions"))
+            m_initializationOptions = *initOptionsString;
 
         m_name = options.get<QString>("name");
         m_settingsTypeId = Utils::Id::fromString(QString("Lua_%1").arg(m_name));
@@ -233,21 +295,7 @@ public:
                     m_languageFilter.mimeTypes.push_back(v.as<QString>());
         }
 
-        auto initOptionsTable = options.get<sol::optional<sol::table>>("initializationOptions");
-        if (initOptionsTable) {
-            QJsonValue json = ::Lua::LuaEngine::toJson(*initOptionsTable);
-            QJsonDocument doc;
-            if (json.isArray()) {
-                doc.setArray(json.toArray());
-                m_initializationOptions = QString::fromUtf8(doc.toJson());
-            } else if (json.isObject()) {
-                doc.setObject(json.toObject());
-                m_initializationOptions = QString::fromUtf8(doc.toJson());
-            }
-        }
-        auto initOptionsString = options.get<sol::optional<QString>>("initializationOptions");
-        if (initOptionsString)
-            m_initializationOptions = *initOptionsString;
+        m_showInSettings = options.get<std::optional<bool>>("showInSettings").value_or(true);
 
         // get<sol::optional<>> because on MSVC, get_or(..., nullptr) fails to compile
         m_aspects = options.get<sol::optional<AspectContainer *>>("settings").value_or(nullptr);
@@ -266,9 +314,7 @@ public:
             [this](Client *c) {
                 auto luaClient = qobject_cast<LuaClient *>(c);
                 if (luaClient && luaClient->m_settingsId == m_settingsTypeId && m_onInstanceStart) {
-                    QTC_CHECK(::Lua::LuaEngine::void_safe_call(*m_onInstanceStart, c));
-
-                    m_clients.push_back(c);
+                    QTC_CHECK(::Lua::void_safe_call(*m_onInstanceStart, c));
                     updateMessageCallbacks();
                 }
             });
@@ -286,16 +332,10 @@ public:
         if (!luaClient || luaClient->m_settingsId != m_settingsTypeId)
             return;
 
-        if (m_clients.contains(c))
-            m_clients.removeOne(c);
-
         if (unexpected && m_startFailedCallback) {
-            QTC_CHECK_EXPECTED(::Lua::LuaEngine::void_safe_call(*m_startFailedCallback));
+            QTC_CHECK_EXPECTED(::Lua::void_safe_call(*m_startFailedCallback));
         }
     }
-
-    // TODO: Unregister Client settings from LanguageClientManager
-    ~LuaClientWrapper() = default;
 
     TransportType transportType() { return m_transportType; }
 
@@ -323,7 +363,7 @@ public:
     Layouting::LayoutModifier settingsLayout()
     {
         if (m_aspects)
-            return [this](Layouting::Layout *iface) { m_aspects->addToLayout(*iface); };
+            return [this](Layouting::Layout *iface) { m_aspects->addToLayoutImpl(*iface); };
         return {};
     }
 
@@ -335,12 +375,20 @@ public:
 
     void updateMessageCallbacks()
     {
-        for (Client *c : m_clients) {
+        for (Client *c : LanguageClientManager::clientsForSettingId(m_clientSettingsId)) {
+            if (!c)
+                continue;
             for (const auto &[msg, func] : m_messageCallbacks.asKeyValueRange()) {
                 c->registerCustomMethod(
-                    msg, [name = msg, f = func](const LanguageServerProtocol::JsonRpcMessage &m) {
-                        auto table = ::Lua::LuaEngine::toTable(f.lua_state(), m.toJsonObject());
-                        auto result = f.call(table);
+                    msg,
+                    [self = QPointer<LuaClientWrapper>(this),
+                     name = msg](const LanguageServerProtocol::JsonRpcMessage &m) {
+                        if (!self)
+                            return;
+
+                        auto func = self->m_messageCallbacks.value(name);
+                        auto table = ::Lua::toTable(func.lua_state(), m.toJsonObject());
+                        auto result = func.call(table);
                         if (!result.valid()) {
                             qWarning() << "Error calling message callback for:" << name << ":"
                                        << (result.get<sol::error>().what());
@@ -352,12 +400,66 @@ public:
 
     void sendMessage(const sol::table &message)
     {
-        const QJsonValue messageValue = ::Lua::LuaEngine::toJson(message);
+        const QJsonValue messageValue = ::Lua::toJson(message);
         if (!messageValue.isObject())
             throw sol::error("Message is not an object");
-        const LanguageServerProtocol::JsonRpcMessage jsonrpcmessage(messageValue.toObject());
-        for (Client *c : m_clients)
-            c->sendMessage(jsonrpcmessage);
+
+        const LanguageServerProtocol::JsonRpcMessage request(messageValue.toObject());
+        for (Client *c : LanguageClientManager::clientsForSettingId(m_clientSettingsId)) {
+            if (c)
+                c->sendMessage(request);
+        }
+    }
+
+    QList<Client *> clientsForDocument(Core::IDocument *document)
+    {
+        if (m_startBehavior == BaseSettings::RequiresProject) {
+            Project *project = ProjectManager::projectForFile(document->filePath());
+            const auto clients = LanguageClientManager::clientsForSettingId(m_clientSettingsId);
+            return Utils::filtered(clients, [project](Client *c) {
+                return c && c->project() == project;
+            });
+        }
+
+        return LanguageClientManager::clientsForSettingId(m_clientSettingsId);
+    }
+
+    void sendMessageForDocument(Core::IDocument *document, const sol::table &message)
+    {
+        const QJsonValue messageValue = ::Lua::toJson(message);
+        if (!messageValue.isObject())
+            throw sol::error("Message is not an object");
+
+        const LanguageServerProtocol::JsonRpcMessage request(messageValue.toObject());
+
+        auto clients = clientsForDocument(document);
+        QTC_CHECK(clients.size() == 1);
+
+        for (Client *c : clients) {
+            if (c)
+                c->sendMessage(request);
+        }
+    }
+
+    void sendMessageWithIdForDocument_cb(
+        TextEditor::TextDocument *document, const sol::table &message, const sol::function callback)
+    {
+        const QJsonValue messageValue = ::Lua::toJson(message);
+        if (!messageValue.isObject())
+            throw sol::error("Message is not an object");
+
+        QJsonObject obj = messageValue.toObject();
+        obj["id"] = QUuid::createUuid().toString();
+
+        const RequestWithResponse request{obj, callback};
+
+        auto clients = clientsForDocument(document);
+
+        QTC_ASSERT(clients.size() != 0, throw sol::error("No client for document found"));
+        QTC_ASSERT(clients.size() == 1, throw sol::error("Multiple clients for document found"));
+        QTC_ASSERT(clients.front(), throw sol::error("Client is null"));
+
+        clients.front()->sendMessage(request);
     }
 
     void updateOptions()
@@ -366,6 +468,16 @@ public:
             auto result = m_cmdLineCallback(m_cmdLine);
             if (!result)
                 qWarning() << "Error applying option callback:" << result.error();
+        }
+        if (m_initOptionsCallback) {
+            expected_str<void> result = m_initOptionsCallback(m_initializationOptions);
+            if (!result)
+                qWarning() << "Error applying init option callback:" << result.error();
+
+            // Right now there is only one option that needs to be mirrored to the LSP Settings,
+            // so we only emit optionsChanged() here. If another setting should need to be dynamic
+            // optionsChanged() needs to be called for it as well, but only once per updateOptions()
+            emit optionsChanged();
         }
     }
 
@@ -434,7 +546,22 @@ public:
         }
         return nullptr;
     }
+
+signals:
+    void optionsChanged();
 };
+
+LuaClientSettings::LuaClientSettings(const LuaClientSettings &other)
+    : BaseSettings::BaseSettings(other)
+    , m_wrapper(other.m_wrapper)
+{
+    if (auto w = m_wrapper.lock()) {
+        QObject::connect(w.get(), &LuaClientWrapper::optionsChanged, &guard, [this] {
+            if (auto w = m_wrapper.lock())
+                m_initializationOptions = w->m_initializationOptions;
+        });
+    }
+}
 
 LuaClientSettings::LuaClientSettings(const std::weak_ptr<LuaClientWrapper> &wrapper)
     : m_wrapper(wrapper)
@@ -445,6 +572,11 @@ LuaClientSettings::LuaClientSettings(const std::weak_ptr<LuaClientWrapper> &wrap
         m_languageFilter = w->m_languageFilter;
         m_initializationOptions = w->m_initializationOptions;
         m_startBehavior = w->m_startBehavior;
+        m_showInSettings = w->m_showInSettings;
+        QObject::connect(w.get(), &LuaClientWrapper::optionsChanged, &guard, [this] {
+            if (auto w = m_wrapper.lock())
+                m_initializationOptions = w->m_initializationOptions;
+        });
     }
 }
 
@@ -452,8 +584,14 @@ bool LuaClientSettings::applyFromSettingsWidget(QWidget *widget)
 {
     BaseSettings::applyFromSettingsWidget(widget);
 
-    if (auto w = m_wrapper.lock())
+    if (auto w = m_wrapper.lock()) {
+        w->m_name = m_name;
+        if (!w->m_initOptionsCallback)
+            w->m_initializationOptions = m_initializationOptions;
+        w->m_languageFilter = m_languageFilter;
+        w->m_startBehavior = m_startBehavior;
         w->applySettings();
+    }
 
     return true;
 }
@@ -471,7 +609,8 @@ void LuaClientSettings::fromMap(const Utils::Store &map)
     BaseSettings::fromMap(map);
     if (auto w = m_wrapper.lock()) {
         w->m_name = m_name;
-        w->m_initializationOptions = m_initializationOptions;
+        if (!w->m_initOptionsCallback)
+            w->m_initializationOptions = m_initializationOptions;
         w->m_languageFilter = m_languageFilter;
         w->m_startBehavior = m_startBehavior;
         w->fromMap(map);
@@ -504,7 +643,10 @@ BaseClientInterface *LuaClientSettings::createInterface(ProjectExplorer::Project
 
 static void registerLuaApi()
 {
-    ::Lua::LuaEngine::registerProvider("LSP", [](sol::state_view lua) -> sol::object {
+    ::Lua::registerProvider("LSP", [](sol::state_view lua) -> sol::object {
+        sol::table async = lua.script("return require('async')", "_process_").get<sol::table>();
+        sol::function wrap = async["wrap"];
+
         sol::table result = lua.create_table();
 
         auto wrapperClass = result.new_usertype<LuaClientWrapper>(
@@ -521,24 +663,61 @@ static void registerLuaApi()
             &LuaClientWrapper::registerMessageCallback,
             "sendMessage",
             &LuaClientWrapper::sendMessage,
+            "sendMessageForDocument",
+            &LuaClientWrapper::sendMessageForDocument,
+            "sendMessageWithIdForDocument_cb",
+            &LuaClientWrapper::sendMessageWithIdForDocument_cb,
             "create",
             [](const sol::table &options) -> std::shared_ptr<LuaClientWrapper> {
-                auto luaClient = std::make_shared<LuaClientWrapper>(options);
-                auto client = new LuaClientSettings(luaClient);
+                auto luaClientWrapper = std::make_shared<LuaClientWrapper>(options);
+                auto clientSettings = new LuaClientSettings(luaClientWrapper);
 
                 // The order is important!
                 // First restore the settings ...
                 const QList<Utils::Store> savedSettings
-                    = LanguageClientSettings::storesBySettingsType(luaClient->m_settingsTypeId);
+                    = LanguageClientSettings::storesBySettingsType(
+                        luaClientWrapper->m_settingsTypeId);
 
                 if (!savedSettings.isEmpty())
-                    client->fromMap(savedSettings.first());
+                    clientSettings->fromMap(savedSettings.first());
 
                 // ... then register the settings.
-                LanguageClientManager::registerClientSettings(client);
+                LanguageClientManager::registerClientSettings(clientSettings);
+                luaClientWrapper->m_clientSettingsId = clientSettings->m_id;
 
-                return luaClient;
+                // and the client type.
+                ClientType type;
+                type.id = clientSettings->m_settingsTypeId;
+                type.name = luaClientWrapper->m_name;
+                type.userAddable = false;
+                LanguageClientSettings::registerClientType(type);
+
+                return luaClientWrapper;
+            },
+            "documentVersion",
+            [](LuaClientWrapper *wrapper,
+               const Utils::FilePath &path) -> std::tuple<bool, std::variant<int, QString>> {
+                auto clients = wrapper->clientsForDocument(
+                    TextEditor::TextDocument::textDocumentForFilePath(path));
+                if (clients.empty())
+                    return {false, "No client found."};
+
+                return {true, clients.first()->documentVersion(path)};
+            },
+
+            "hostPathToServerUri",
+            [](LuaClientWrapper *wrapper, const Utils::FilePath &path) -> std::tuple<bool, QString> {
+                auto clients = wrapper->clientsForDocument(
+                    TextEditor::TextDocument::textDocumentForFilePath(path));
+                if (clients.empty())
+                    return {false, "No client found."};
+
+                return {true, clients.first()->hostPathToServerUri(path).toString()};
             });
+
+        wrapperClass["sendMessageWithIdForDocument"]
+            = wrap(wrapperClass["sendMessageWithIdForDocument_cb"].get<sol::function>())
+                  .get<sol::function>();
 
         return result;
     });

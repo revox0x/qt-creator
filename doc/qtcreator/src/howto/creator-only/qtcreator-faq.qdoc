@@ -53,8 +53,8 @@
     This also enables code completion of QML code and removes error messages.
 
     The following example illustrates how to specify the import path for qmake
-    projects so that it works when switching between build and run kits for
-    different target platforms:
+    projects so that it works when switching between build and run \l{Kits}{kits}
+    for different target platforms:
 
     \code
     TEMPNAME = $${QMAKE_QMAKE}
@@ -143,7 +143,7 @@
 
     You must use Python version 2.6 or 2.7.
 
-    For more information, see \l{Supported Native Debuggers}.
+    For more information, see \l{Supported Debuggers}.
 
     \b {How do I generate a core file in \QC?}
 

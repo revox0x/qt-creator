@@ -49,6 +49,7 @@ public:
         , vendor(createContentsLabel())
         , component(createContentsLabel())
         , url(createContentsLabel())
+        , documentationUrl(createContentsLabel())
         , location(createContentsLabel())
         , platforms(createContentsLabel())
         , description(createTextEdit())
@@ -67,6 +68,7 @@ public:
             Tr::tr("Vendor:"), vendor, br,
             Tr::tr("Group:"), component, br,
             Tr::tr("URL:"), url, br,
+            Tr::tr("Documentation:"), documentationUrl, br,
             Tr::tr("Location:"), location, br,
             Tr::tr("Platforms:"), platforms, br,
             Tr::tr("Description:"), description, br,
@@ -87,6 +89,7 @@ public:
     QLabel *vendor = nullptr;
     QLabel *component = nullptr;
     QLabel *url = nullptr;
+    QLabel *documentationUrl = nullptr;
     QLabel *location = nullptr;
     QLabel *platforms = nullptr;
     QTextEdit *description = nullptr;
@@ -145,7 +148,11 @@ void PluginDetailsView::update(PluginSpec *spec)
     d->compatVersion->setText(spec->compatVersion());
     d->vendor->setText(spec->vendor());
     d->component->setText(spec->category().isEmpty() ? Tr::tr("None") : spec->category());
-    d->url->setText(QString::fromLatin1("<a href=\"%1\">%1</a>").arg(spec->url()));
+    const auto toHtmlLink = [](const QString &url) {
+        return QString::fromLatin1("<a href=\"%1\">%1</a>").arg(url);
+    };
+    d->url->setText(toHtmlLink(spec->url()));
+    d->documentationUrl->setText(toHtmlLink(spec->documentationUrl()));
     d->location->setText(spec->filePath().toUserOutput());
     const QString pattern = spec->platformSpecification().pattern();
     const QString platform = pattern.isEmpty() ? Tr::tr("All") : pattern;
@@ -156,7 +163,7 @@ void PluginDetailsView::update(PluginSpec *spec)
     if (!description.isEmpty() && !spec->longDescription().isEmpty())
         description += "\n\n";
     description += spec->longDescription();
-    d->description->setText(description);
+    d->description->setMarkdown(description);
     d->copyright->setText(spec->copyright());
     d->license->setText(spec->license());
     d->dependencies->addItems(Utils::transform<QList>(spec->dependencies(),

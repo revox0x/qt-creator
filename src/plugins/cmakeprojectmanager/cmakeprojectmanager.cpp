@@ -22,6 +22,7 @@
 #include <coreplugin/messagemanager.h>
 #include <coreplugin/modemanager.h>
 
+#include <cppeditor/cppprojectfile.h>
 #include <cppeditor/cpptoolsreuse.h>
 
 #include <debugger/analyzer/analyzerconstants.h>
@@ -262,6 +263,7 @@ void CMakeManager::clearCMakeCache(BuildSystem *buildSystem)
     QTC_ASSERT(cmakeBuildSystem, return);
 
     cmakeBuildSystem->clearCMakeCache();
+    cmakeBuildSystem->disableCMakeBuildMenuActions();
 }
 
 void CMakeManager::runCMake(BuildSystem *buildSystem)

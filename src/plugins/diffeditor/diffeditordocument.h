@@ -45,6 +45,8 @@ public:
 
     void setDescription(const QString &description);
     QString description() const;
+    void setDescriptionAnsiEnabled(bool enabled) { m_descriptionAnsiEnabled = enabled; }
+    bool isDescriptionAnsiEnabled() const { return m_descriptionAnsiEnabled; }
 
     void setContextLineCount(int lines);
     int contextLineCount() const;
@@ -88,6 +90,7 @@ private:
     int m_contextLineCount = 3;
     bool m_isContextLineCountForced = false;
     bool m_ignoreWhitespace = false;
+    bool m_descriptionAnsiEnabled = false;
     State m_state = LoadOK;
 
     friend class ::DiffEditor::DiffEditorController;

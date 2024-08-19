@@ -1,21 +1,21 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
-#include "qmlexpressionundercursor.h"
-#include "qmljseditor.h"
-#include "qmljseditorconstants.h"
-#include "qmljseditordocument.h"
-#include "qmljseditortr.h"
 #include "qmljshoverhandler.h"
-#include "qmljseditingsettingspage.h"
+
+#include "qmljseditor.h"
+#include "qmljseditordocument.h"
+#include "qmljseditorsettings.h"
+#include "qmljseditortr.h"
 
 #include <coreplugin/icore.h>
 #include <coreplugin/editormanager/ieditor.h>
 #include <coreplugin/editormanager/editormanager.h>
 #include <coreplugin/helpitem.h>
 #include <coreplugin/helpmanager.h>
-#include <utils/qtcassert.h>
+
 #include <extensionsystem/pluginmanager.h>
+
 #include <qmljs/qmljscontext.h>
 #include <qmljs/qmljsscopechain.h>
 #include <qmljs/qmljsinterpreter.h>
@@ -23,7 +23,10 @@
 #include <qmljs/parser/qmljsast_p.h>
 #include <qmljs/parser/qmljsastfwd_p.h>
 #include <qmljs/qmljsutils.h>
+
 #include <texteditor/texteditor.h>
+
+#include <utils/qtcassert.h>
 #include <utils/qrcparser.h>
 #include <utils/tooltip/tooltip.h>
 
@@ -35,6 +38,7 @@
 
 using namespace Core;
 using namespace QmlJS;
+using namespace QmlJSEditor::Internal;
 using namespace TextEditor;
 
 namespace QmlJSEditor {
@@ -123,12 +127,15 @@ static inline QString getModuleName(const ScopeChain &scopeChain, const Document
 bool QmlJSHoverHandler::setQmlTypeHelp(const ScopeChain &scopeChain, const Document::Ptr &qmlDocument,
                                        const ObjectValue *value, const QStringList &qName)
 {
-    QString moduleName = getModuleName(scopeChain, qmlDocument, value);
+    const QString moduleName = getModuleName(scopeChain, qmlDocument, value);
+    static const QRegularExpression anyVersion("((-1|\\d+)\\.-1)|(\\d+\\.\\d+)$");
 
     QStringList helpIdCandidates;
 
     QStringList helpIdPieces(qName);
-    helpIdPieces.prepend(moduleName);
+    QString strippedModuleName = moduleName;
+    strippedModuleName.remove(anyVersion);
+    helpIdPieces.prepend(strippedModuleName);
     helpIdPieces.prepend("QML");
     helpIdCandidates += helpIdPieces.join('.');
 
@@ -151,8 +158,8 @@ bool QmlJSHoverHandler::setQmlTypeHelp(const ScopeChain &scopeChain, const Docum
     const HelpItem::Links links = helpItem.links();
 
     // Check if the module name contains a major version.
-    QRegularExpression version("^([^\\d]*)(\\d+)\\.*\\d*$");
-    QRegularExpressionMatch m = version.match(moduleName);
+    static QRegularExpression version("^([^\\d]*)(\\d+)\\.*\\d*$");
+    const QRegularExpressionMatch m = version.match(moduleName);
     if (m.hasMatch()) {
         QMap<QString, QUrl> filteredUrlMap;
         const QString maj = m.captured(2);
@@ -375,7 +382,7 @@ void QmlJSHoverHandler::reset()
 void QmlJSHoverHandler::operateTooltip(TextEditorWidget *editorWidget, const QPoint &point)
 {
     // disable hoverhandling in case qmlls is enabled
-    if (QmlJsEditingSettings::get().qmllsSettings().useQmlls) {
+    if (settings().useQmlls()) {
         BaseHoverHandler::operateTooltip(editorWidget, point);
         return;
     }

@@ -10,6 +10,7 @@
 #include <coreplugin/icore.h>
 
 #include <cppeditor/clangdiagnosticconfigsmodel.h>
+#include <cppeditor/compileroptionsbuilder.h>
 #include <cppeditor/cppcodemodelsettings.h>
 #include <cppeditor/cppprojectfile.h>
 #include <cppeditor/cpptoolsreuse.h>
@@ -223,10 +224,10 @@ GroupItem clangToolTask(const AnalyzeUnits &units,
                        error});
     };
 
-    return Group {
+    return For {
+        iterator,
         parallelLimit(qMax(1, input.runSettings.parallelJobs())),
         finishAllAndSuccess,
-        iterator,
         Group {
             storage,
             onGroupSetup(onSetup),

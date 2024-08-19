@@ -284,14 +284,16 @@ bool FlatModel::setData(const QModelIndex &index, const QVariant &value, int rol
     QTC_ASSERT(node, return false);
 
     std::vector<std::tuple<Node *, FilePath, FilePath>> toRename;
-    const Utils::FilePath orgFilePath = node->filePath();
-    const Utils::FilePath newFilePath = orgFilePath.parentDir().pathAppended(value.toString());
+    const FilePath orgFilePath = node->filePath();
+    const FilePath newFilePath = orgFilePath.parentDir().pathAppended(value.toString());
+    const FilePath valuePath = FilePath::fromString(value.toString());
     const QFileInfo orgFileInfo = orgFilePath.toFileInfo();
     toRename.emplace_back(std::make_tuple(node, orgFilePath, newFilePath));
 
     // The base name of the file was changed. Go look for other files with the same base name
     // and offer to rename them as well.
-    if (orgFilePath != newFilePath && orgFilePath.suffix() == newFilePath.suffix()) {
+    if (!orgFilePath.equalsCaseSensitive(newFilePath)
+        && orgFilePath.suffix() == newFilePath.suffix()) {
         const QList<Node *> candidateNodes = ProjectTree::siblingsWithSameBaseName(node);
         if (!candidateNodes.isEmpty()) {
             QStringList fileNames = transform<QStringList>(candidateNodes, [](const Node *n) {
@@ -308,12 +310,13 @@ bool FlatModel::setData(const QModelIndex &index, const QVariant &value, int rol
             case QMessageBox::Yes:
                 for (Node * const n : candidateNodes) {
                     QString targetFilePath = orgFileInfo.absolutePath() + '/'
-                                             + newFilePath.completeBaseName();
+                                             + valuePath.parentDir().path() + '/'
+                                             + valuePath.completeBaseName();
                     const QString suffix = n->filePath().suffix();
                     if (!suffix.isEmpty())
                         targetFilePath.append('.').append(suffix);
                     toRename.emplace_back(std::make_tuple(n, n->filePath(),
-                                                          FilePath::fromString(targetFilePath)));
+                                                          FilePath::fromString(targetFilePath).cleanPath()));
                 }
                 break;
             case QMessageBox::Cancel:

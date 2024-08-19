@@ -15,13 +15,14 @@
 ],
 
     "Category" : "Device Support",
-    "Description" : "Develop applications for Boot to Qt devices",
+    "Description" : "Develop applications for Boot to Qt devices.",
     "LongDescription" : [
-        "Connect devices with USB or WLAN to run, debug, and analyze applications built for them.",
+        "Connect devices with a USB cable, or a wired or wireless connection, depending on the device to run, debug, and analyze applications built for them.",
         "You also need:",
             "- Boot to Qt",
             "- Build tools and other dependencies related to the development host"
 ],
     "Url" : "https://www.qt.io",
+    "DocumentationUrl" : "https://doc.qt.io/qtcreator/creator-developing-b2qt.html",
     ${IDE_PLUGIN_DEPENDENCIES}
 }

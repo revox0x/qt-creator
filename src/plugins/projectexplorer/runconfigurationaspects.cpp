@@ -63,7 +63,7 @@ TerminalAspect::TerminalAspect(AspectContainer *container)
 /*!
     \reimp
 */
-void TerminalAspect::addToLayout(Layout &parent)
+void TerminalAspect::addToLayoutImpl(Layout &parent)
 {
     QTC_CHECK(!m_checkBox);
     m_checkBox = createSubWidget<QCheckBox>(Tr::tr("Run in terminal"));
@@ -174,7 +174,7 @@ void WorkingDirectoryAspect::setEnvironment(EnvironmentAspect *envAspect)
 /*!
     \reimp
 */
-void WorkingDirectoryAspect::addToLayout(Layout &builder)
+void WorkingDirectoryAspect::addToLayoutImpl(Layout &builder)
 {
     QTC_CHECK(!m_chooser);
     m_chooser = new PathChooser;
@@ -186,7 +186,7 @@ void WorkingDirectoryAspect::addToLayout(Layout &builder)
     m_chooser->setBaseDirectory(m_defaultWorkingDirectory);
     m_chooser->setFilePath(m_workingDirectory.isEmpty() ? m_defaultWorkingDirectory : m_workingDirectory);
     connect(m_chooser.data(), &PathChooser::textChanged, this, [this] {
-        m_workingDirectory = m_chooser->rawFilePath();
+        m_workingDirectory = m_chooser->unexpandedFilePath();
         m_resetButton->setEnabled(m_workingDirectory != m_defaultWorkingDirectory);
     });
 
@@ -457,7 +457,7 @@ QWidget *ArgumentsAspect::setupChooser()
 /*!
     \reimp
 */
-void ArgumentsAspect::addToLayout(Layout &builder)
+void ArgumentsAspect::addToLayoutImpl(Layout &builder)
 {
     QTC_CHECK(!m_chooser && !m_multiLineChooser && !m_multiLineButton);
 
@@ -650,7 +650,7 @@ FilePath ExecutableAspect::executable() const
 /*!
     \reimp
 */
-void ExecutableAspect::addToLayout(Layout &builder)
+void ExecutableAspect::addToLayoutImpl(Layout &builder)
 {
     builder.addItem(m_executable);
     if (m_alternativeExecutable) {
@@ -781,6 +781,10 @@ RunAsRootAspect::RunAsRootAspect(AspectContainer *container)
     setId("RunAsRoot");
     setSettingsKey("RunConfiguration.RunAsRoot");
     setLabel(Tr::tr("Run as root user"), LabelPlacement::AtCheckBox);
+
+    // Not technically correct, but sensible approximation.
+    // Client code with more context can override.
+    setVisible(HostOsInfo::isAnyUnixHost());
 }
 
 Interpreter::Interpreter()
@@ -796,6 +800,156 @@ Interpreter::Interpreter(const QString &_id,
     , command(_command)
     , autoDetected(_autoDetected)
 {}
+
+static QString launcherType2UiString(const QString &type)
+{
+    if (type == "test")
+        return Tr::tr("Test");
+    else if (type == "emulator")
+        return Tr::tr("Emulator");
+    return QString();
+}
+
+Launcher::Launcher(const LauncherInfo &launcherInfo, const FilePath &sourceDirectory)
+    : id(launcherInfo.type)
+    , arguments(launcherInfo.arguments)
+{
+    if (launcherInfo.type != "unused") {
+        command = launcherInfo.command;
+        if (command.isRelativePath())
+            command = sourceDirectory.resolvePath(command);
+        displayName = QString("%1 (%2)").arg(launcherType2UiString(launcherInfo.type),
+                                      CommandLine(command, arguments).displayName());
+    }
+}
+
+Launcher::Launcher(const LauncherInfo &testLauncherInfo, const LauncherInfo &emulatorLauncherInfo, const Utils::FilePath &sourceDirectory)
+    : id(testLauncherInfo.type + " + " + emulatorLauncherInfo.type)
+    , command(testLauncherInfo.command)
+    , arguments(testLauncherInfo.arguments)
+{
+    if (command.isRelativePath())
+        command = sourceDirectory.resolvePath(command);
+    FilePath command1 = emulatorLauncherInfo.command;
+    if (command1.isRelativePath())
+        command1 = sourceDirectory.resolvePath(command1);
+    arguments.append(command1.toString());
+    arguments.append(emulatorLauncherInfo.arguments);
+    displayName = QString("%1 + %2 (%3)").arg(launcherType2UiString(testLauncherInfo.type),
+                                       launcherType2UiString(emulatorLauncherInfo.type),
+                                       CommandLine(command, arguments).displayName());
+}
+
+/*!
+\class ProjectExplorer::LauncherAspect
+\inmodule QtCreator
+
+\brief With the LauncherAspect class, a user can specify a launcher program for
+use with executable files for which a launcher program is optionally available.
+*/
+
+LauncherAspect::LauncherAspect(AspectContainer *container)
+    : BaseAspect(container)
+{
+    addDataExtractor(this, &LauncherAspect::currentLauncher, &Data::launcher);
+}
+
+Launcher LauncherAspect::currentLauncher() const
+{
+    return Utils::findOrDefault(m_launchers, Utils::equal(&Launcher::id, m_currentId));
+}
+
+void LauncherAspect::updateLaunchers(const QList<Launcher> &launchers)
+{
+    if (m_launchers == launchers)
+        return;
+    m_launchers = launchers;
+    if (m_comboBox)
+        updateComboBox();
+}
+
+void LauncherAspect::setDefaultLauncher(const Launcher &launcher)
+{
+    if (m_defaultId == launcher.id)
+        return;
+    m_defaultId = launcher.id;
+    if (m_currentId.isEmpty())
+        setCurrentLauncher(launcher);
+}
+
+void LauncherAspect::setCurrentLauncher(const Launcher &launcher)
+{
+    if (m_comboBox) {
+        const int index = m_launchers.indexOf(launcher);
+        if (index < 0 || index >= m_comboBox->count())
+            return;
+        m_comboBox->setCurrentIndex(index);
+    } else {
+        setCurrentLauncherId(launcher.id);
+    }
+}
+
+void LauncherAspect::fromMap(const Store &map)
+{
+    setCurrentLauncherId(map.value(settingsKey(), m_defaultId).toString());
+}
+
+void LauncherAspect::toMap(Store &map) const
+{
+    if (m_currentId != m_defaultId)
+        saveToMap(map, m_currentId, QString(), settingsKey());
+}
+
+void LauncherAspect::addToLayoutImpl(Layout &builder)
+{
+    if (QTC_GUARD(m_comboBox.isNull()))
+        m_comboBox = new QComboBox;
+
+    updateComboBox();
+    connect(m_comboBox, &QComboBox::currentIndexChanged,
+            this, &LauncherAspect::updateCurrentLauncher);
+
+    builder.addItems({Tr::tr("Launcher:"), m_comboBox.data()});
+}
+
+void LauncherAspect::setCurrentLauncherId(const QString &id)
+{
+    if (id == m_currentId)
+        return;
+    m_currentId = id;
+    emit changed();
+}
+
+void LauncherAspect::updateCurrentLauncher()
+{
+    const int index = m_comboBox->currentIndex();
+    if (index < 0)
+        return;
+    QTC_ASSERT(index < m_launchers.size(), return);
+    m_comboBox->setToolTip(m_launchers[index].command.toUserOutput());
+    setCurrentLauncherId(m_launchers[index].id);
+}
+
+void LauncherAspect::updateComboBox()
+{
+    int currentIndex = -1;
+    int defaultIndex = -1;
+    m_comboBox->clear();
+    for (const Launcher &launcher : std::as_const(m_launchers)) {
+        int index = m_comboBox->count();
+        m_comboBox->addItem(launcher.displayName);
+        m_comboBox->setItemData(index, launcher.command.toUserOutput(), Qt::ToolTipRole);
+        if (launcher.id == m_currentId)
+            currentIndex = index;
+        if (launcher.id == m_defaultId)
+            defaultIndex = index;
+    }
+    if (currentIndex >= 0)
+        m_comboBox->setCurrentIndex(currentIndex);
+    else if (defaultIndex >= 0)
+        m_comboBox->setCurrentIndex(defaultIndex);
+    updateCurrentLauncher();
+}
 
 /*!
     \class ProjectExplorer::X11ForwardingAspect

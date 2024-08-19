@@ -8,11 +8,11 @@
 // **********************************************************************
 
 /*!
-    \previouspage index.html
+    \previouspage creator-getting-started.html
     \page creator-overview.html
-    \nextpage creator-getting-started.html
+    \nextpage creator-quick-tour.html
 
-    \title Developing with \QC
+    \title Overview
 
     \QC is a cross-platform, complete integrated development environment
     (IDE) that you can use to create applications for desktop, embedded,
@@ -181,7 +181,7 @@
 
     Run and deploy Qt applications that you build for different target
     platforms or with different compilers, debuggers, or Qt versions.
-    \l{glossary-buildandrun-kit}{Kits} define the tools, \l{glossary-device}
+    \l{Kits} define the tools, \l{glossary-device}
     {device} type and other settings to use when building and running your
     project.
 
@@ -266,10 +266,10 @@
             to find the next one.
     \endlist
 
-    \QC integrates several native debuggers for inspecting the state of
-    your application while debugging. The debugger plugin automatically selects
-    a suitable native debugger for each kit from the ones it finds on the
-    computer. Edit the kits to override this choice.
+    \QC integrates several debuggers for inspecting the state of your
+    application. It automatically selects a suitable debugger for each
+    kit from the ones it finds on the computer. Edit the kits to override
+    this choice.
 
     If you install \QC with \QOI, the GNU Symbolic Debugger is installed
     automatically and you should be ready to start debugging after you create

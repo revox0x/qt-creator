@@ -55,12 +55,12 @@ static std::optional<QDomElement> documentElement(const FilePath &fileName)
 {
     QFile file(fileName.toString());
     if (!file.open(QIODevice::ReadOnly)) {
-        MessageManager::writeDisrupting(Tr::tr("Cannot open: %1").arg(fileName.toUserOutput()));
+        MessageManager::writeDisrupting(Tr::tr("Cannot open \"%1\".").arg(fileName.toUserOutput()));
         return {};
     }
     QDomDocument doc;
     if (!doc.setContent(file.readAll())) {
-        MessageManager::writeDisrupting(Tr::tr("Cannot parse: %1").arg(fileName.toUserOutput()));
+        MessageManager::writeDisrupting(Tr::tr("Cannot parse \"%1\".").arg(fileName.toUserOutput()));
         return {};
     }
     return doc.documentElement();
@@ -580,36 +580,6 @@ QString androidNameForApiLevel(int x)
         return QLatin1String("Android 14.0 (\"UpsideDownCake\")");
     default:
         return Tr::tr("Unknown Android version. API Level: %1").arg(x);
-    }
-}
-
-void installQASIPackage(Target *target, const FilePath &packagePath)
-{
-    const QStringList appAbis = AndroidManager::applicationAbis(target);
-    if (appAbis.isEmpty())
-        return;
-    const IDevice::ConstPtr device = DeviceKitAspect::device(target->kit());
-    AndroidDeviceInfo info = AndroidDevice::androidDeviceInfoFromIDevice(device.get());
-    if (!info.isValid()) // aborted
-        return;
-
-    QString deviceSerialNumber = info.serialNumber;
-    if (info.type == IDevice::Emulator) {
-        deviceSerialNumber = AndroidAvdManager::startAvd(info.avdName);
-        if (deviceSerialNumber.isEmpty())
-            MessageManager::writeDisrupting(Tr::tr("Starting Android virtual device failed."));
-    }
-
-    QStringList arguments = AndroidDeviceInfo::adbSelector(deviceSerialNumber);
-    arguments << "install" << "-r " << packagePath.path();
-    QString error;
-    Process *process = startAdbProcess(arguments, &error);
-    if (process) {
-        // TODO: Potential leak when the process is still running on Creator shutdown.
-        QObject::connect(process, &Process::done, process, &QObject::deleteLater);
-    } else {
-        MessageManager::writeDisrupting(
-            Tr::tr("Android package installation failed.\n%1").arg(error));
     }
 }
 

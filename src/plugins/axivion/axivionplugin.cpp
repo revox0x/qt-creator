@@ -234,6 +234,7 @@ public:
     NetworkAccessManager m_networkAccessManager;
     std::optional<DashboardInfo> m_dashboardInfo;
     std::optional<Dto::ProjectInfoDto> m_currentProjectInfo;
+    std::optional<QString> m_analysisVersion;
     Project *m_project = nullptr;
     bool m_runningQuery = false;
     TaskTreeRunner m_taskTreeRunner;
@@ -308,6 +309,12 @@ AxivionPluginPrivate::AxivionPluginPrivate()
     connect(&m_networkAccessManager, &QNetworkAccessManager::sslErrors,
             this, &AxivionPluginPrivate::handleSslErrors);
 #endif // ssl
+    connect(&settings().highlightMarks, &BoolAspect::changed, this, [this] {
+        if (settings().highlightMarks())
+            handleOpenedDocs();
+        else
+            clearAllMarks();
+    });
 }
 
 void AxivionPluginPrivate::handleSslErrors(QNetworkReply *reply, const QList<QSslError> &errors)
@@ -342,6 +349,7 @@ void AxivionPluginPrivate::onStartupProjectChanged(Project *project)
     m_project = project;
     clearAllMarks();
     m_currentProjectInfo = {};
+    m_analysisVersion = {};
     updateDashboard();
 
     if (!m_project) {
@@ -374,6 +382,7 @@ static QUrl constructUrl(const QString &projectName, const QString &subPath, con
 
 static constexpr int httpStatusCodeOk = 200;
 constexpr char s_htmlContentType[] = "text/html";
+constexpr char s_plaintextContentType[] = "text/plain";
 constexpr char s_jsonContentType[] = "application/json";
 
 static bool isServerAccessEstablished()
@@ -382,15 +391,17 @@ static bool isServerAccessEstablished()
            || (dd->m_serverAccess == ServerAccess::WithAuthorization && dd->m_apiToken);
 }
 
-static Group fetchHtmlRecipe(const QUrl &url, const std::function<void(const QByteArray &)> &handler)
+static Group fetchSimpleRecipe(const QUrl &url,
+                               const QByteArray &expectedContentType,
+                               const std::function<void(const QByteArray &)> &handler)
 {
     // TODO: Refactor so that it's a common code with fetchDataRecipe().
-    const auto onQuerySetup = [url](NetworkQuery &query) {
+    const auto onQuerySetup = [url, expectedContentType](NetworkQuery &query) {
         if (!isServerAccessEstablished())
             return SetupResult::StopWithError; // TODO: start authorizationRecipe()?
 
         QNetworkRequest request(url);
-        request.setRawHeader("Accept", s_htmlContentType);
+        request.setRawHeader("Accept", expectedContentType);
         if (dd->m_serverAccess == ServerAccess::WithAuthorization && dd->m_apiToken)
             request.setRawHeader("Authorization", "AxToken " + *dd->m_apiToken);
         const QByteArray ua = "Axivion" + QCoreApplication::applicationName().toUtf8() +
@@ -400,7 +411,7 @@ static Group fetchHtmlRecipe(const QUrl &url, const std::function<void(const QBy
         query.setNetworkAccessManager(&dd->m_networkAccessManager);
         return SetupResult::Continue;
     };
-    const auto onQueryDone = [url, handler](const NetworkQuery &query, DoneWith doneWith) {
+    const auto onQueryDone = [url, expectedContentType, handler](const NetworkQuery &query, DoneWith doneWith) {
         QNetworkReply *reply = query.reply();
         const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const QString contentType = reply->header(QNetworkRequest::ContentTypeHeader)
@@ -410,13 +421,23 @@ static Group fetchHtmlRecipe(const QUrl &url, const std::function<void(const QBy
                                         .trimmed()
                                         .toLower();
         if (doneWith == DoneWith::Success && statusCode == httpStatusCodeOk
-            && contentType == s_htmlContentType) {
+            && contentType == QString::fromUtf8(expectedContentType)) {
             handler(reply->readAll());
             return DoneResult::Success;
         }
         return DoneResult::Error;
     };
     return {NetworkQueryTask(onQuerySetup, onQueryDone)};
+}
+
+static Group fetchHtmlRecipe(const QUrl &url, const std::function<void(const QByteArray &)> &handler)
+{
+    return fetchSimpleRecipe(url, s_htmlContentType, handler);
+}
+
+static Group fetchPlainTextRecipe(const QUrl &url, const std::function<void(const QByteArray &)> &handler)
+{
+    return fetchSimpleRecipe(url, s_plaintextContentType, handler);
 }
 
 template <typename DtoType, template <typename> typename DtoStorageType>
@@ -691,7 +712,7 @@ static Group authorizationRecipe()
                 *serverUrlStorage = unauthorizedDashboardStorage->url;
             }),
         },
-        Group {
+        For {
             LoopUntil(onCredentialLoopCondition),
             CredentialQueryTask(onGetCredentialSetup, onGetCredentialDone),
             Group {
@@ -791,20 +812,34 @@ Group lineMarkerRecipe(const FilePath &filePath, const LineMarkerHandler &handle
 {
     QTC_ASSERT(dd->m_currentProjectInfo, return {}); // TODO: Call handler with unexpected?
     QTC_ASSERT(!filePath.isEmpty(), return {}); // TODO: Call handler with unexpected?
+    QTC_ASSERT(dd->m_analysisVersion, return {}); // TODO: Call handler with unexpected?
 
     const QString fileName = QString::fromUtf8(QUrl::toPercentEncoding(filePath.path()));
-    const QUrlQuery query({{"filename", fileName}});
+    const QUrlQuery query({{"filename", fileName}, {"version", *dd->m_analysisVersion}});
     const QUrl url = constructUrl(dd->m_currentProjectInfo.value().name, "files", query);
     return fetchDataRecipe<Dto::FileViewDto>(url, handler);
+}
+
+Group fileSourceRecipe(const FilePath &filePath, const std::function<void(const QByteArray &)> &handler)
+{
+    QTC_ASSERT(dd->m_currentProjectInfo, return {}); // TODO: Call handler with unexpected
+    QTC_ASSERT(!filePath.isEmpty(), return {}); // TODO: Call handler with unexpected
+    QTC_ASSERT(dd->m_analysisVersion, return {}); // TODO: Call handler with unexpected
+
+    const QString fileName = QString::fromUtf8(QUrl::toPercentEncoding(filePath.path()));
+    const QUrlQuery query({{"filename", fileName}, {"version", *dd->m_analysisVersion}});
+    const QUrl url = constructUrl(dd->m_currentProjectInfo.value().name, "sourcecode", query);
+    return fetchPlainTextRecipe(url, handler);
 }
 
 Group issueHtmlRecipe(const QString &issueId, const HtmlHandler &handler)
 {
     QTC_ASSERT(dd->m_currentProjectInfo, return {}); // TODO: Call handler with unexpected?
+    QTC_ASSERT(dd->m_analysisVersion, return {}); // TODO: Call handler with unexpected?
 
     const QUrl url = constructUrl(dd->m_currentProjectInfo.value().name,
                                   QString("issues/" + issueId + "/properties/"),
-                                  {});
+                                  {{"version", *dd->m_analysisVersion}});
     return fetchHtmlRecipe(url, handler);
 }
 
@@ -816,6 +851,7 @@ void AxivionPluginPrivate::fetchProjectInfo(const QString &projectName)
     clearAllMarks();
     if (projectName.isEmpty()) {
         m_currentProjectInfo = {};
+        m_analysisVersion = {};
         updateDashboard();
         return;
     }
@@ -1072,6 +1108,17 @@ const std::optional<DashboardInfo> currentDashboardInfo()
 {
     QTC_ASSERT(dd, return std::nullopt);
     return dd->m_dashboardInfo;
+}
+
+void setAnalysisVersion(const QString &version)
+{
+    QTC_ASSERT(dd, return);
+    if (dd->m_analysisVersion.value_or("") == version)
+        return;
+    dd->m_analysisVersion = version;
+    // refetch issues for already opened docs
+    dd->clearAllMarks();
+    dd->handleOpenedDocs();
 }
 
 Utils::FilePath findFileForIssuePath(const Utils::FilePath &issuePath)

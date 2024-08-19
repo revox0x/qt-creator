@@ -172,8 +172,6 @@ class DumperBase():
         self.qtCustomEventFunc = 0
         self.qtCustomEventPltFunc = 0
         self.qtPropertyFunc = 0
-        self.qtversion = None
-        self.qtns = None
         self.passExceptions = False
         self.isTesting = False
         self.qtLoaded = False
@@ -188,6 +186,11 @@ class DumperBase():
         self.childrenSuffix = '],'
 
         self.dumpermodules = []
+
+        # These are sticky for the session
+        self.qtversion = None
+        self.qtversionAtLeast6 = None
+        self.qtnamespace = None
 
         self.init_type_cache()
 
@@ -211,7 +214,7 @@ class DumperBase():
         self.currentPrintsAddress = True
         self.currentChildType = None
         self.currentChildNumChild = None
-        self.register_known_types()
+        self.register_known_simple_types()
 
     def setVariableFetchingOptions(self, args):
         self.last_args = args
@@ -233,9 +236,16 @@ class DumperBase():
         self.useTimeStamps = int(args.get('timestamps', '0'))
         self.partialVariable = args.get('partialvar', '')
         self.uninitialized = args.get('uninitialized', [])
-        self.qtversion = args.get('qtversion', 0x060602)
-        self.qtnamespace = args.get('qtnamespace', '')
+
         self.uninitialized = list(map(lambda x: self.hexdecode(x), self.uninitialized))
+
+        if self.qtversion is None:
+            self.qtversion = args.get('qtversion', None)
+            if self.qtversion == 0:
+                self.qtversion = None
+        if self.qtnamespace is None:
+            self.qtnamespace = args.get('qtnamespace', None)
+
         #self.warn('NAMESPACE: "%s"' % self.qtNamespace())
         #self.warn('EXPANDED INAMES: %s' % self.expandedINames)
         #self.warn('WATCHERS: %s' % self.watchers)
@@ -256,11 +266,48 @@ class DumperBase():
         args['partialvar'] = ''
         self.fetchVariables(args)
 
+    def extractQtVersion(self):
+        # can be overridden in bridges
+        pass
+
     def qtVersion(self):
-        return self.qtversion
+        if self.qtversion:
+            return self.qtversion
+
+        #self.warn("ACCESSING UNKNOWN QT VERSION")
+        self.qtversion = self.extractQtVersion()
+        if self.qtversion:
+            return self.qtversion
+
+        #self.warn("EXTRACTING QT VERSION FAILED. GUESSING NOW.")
+        if self.qtversionAtLeast6 is None or self.qtversionAtLeast6 is True:
+            return 0x060602
+        return 0x050f00
+
+    def qtVersionAtLeast(self, version):
+        # A hack to cover most of the changes from Qt 5 to 6
+        if version == 0x60000 and self.qtversionAtLeast6 is not None:
+            return self.qtversionAtLeast6
+        return self.qtVersion() >= version
+
+    def qtVersionPing(self, typeid, size_for_qt5=-1):
+        # To be called from places where the type size is sufficient
+        # to distinguish Qt 5.x and 6.x
+        if size_for_qt5 == -1:
+           size_for_qt5 = self.ptrSize()
+        test_size = self.type_size(typeid)
+        self.setQtVersionAtLeast6(test_size > size_for_qt5)
+
+    def setQtVersionAtLeast6(self, is6):
+        if self.qtversionAtLeast6 is None:
+            #self.warn("SETTING Qt VERSION AT LEAST 6 TO %s" % is6)
+            self.qtversionAtLeast6 = is6
+            self.register_known_qt_types()
+        #else:
+        #   self.warn("QT VERSION ALREADY KNOWN")
 
     def qtNamespace(self):
-        return self.qtnamespace
+        return '' if self.qtnamespace is None else self.qtnamespace
 
     def resetPerStepCaches(self):
         self.perStepCache = {}
@@ -447,7 +494,7 @@ class DumperBase():
             native_type = self.lookupNativeType(typename)
             if native_type is None:
                 #sCANNOT DETERMINE SIZE FOR TYelf.dump_location()
-                self.dump_location()
+                #self.dump_location()
                 self.warn("TYPEIDS: %s" % self.typeid_cache)
                 self.warn("COULD NOT FIND TYPE '%s'" % typename)
                 return None
@@ -494,8 +541,13 @@ class DumperBase():
     def register_struct(self, name, p5=0, p6=0, s=0, qobject_based=False):
         # p5 = n  -> n * ptrsize for Qt 5
         # p6 = n  -> n * ptrsize for Qt 6
-        #if self.qtVersion() >= 0x060000:   # FIXME: Qt 5, ptrSize()
-        size = 8 * p6 + s
+        if self.qtversionAtLeast6 is None:
+            self.warn("TOO EARLY TO GUESS QT VERSION")
+            size = 8 * p6 + s
+        elif self.qtversionAtLeast6 is True:
+            size = 8 * p6 + s
+        else:
+            size = 8 * p5 + s
         typeid = self.typeid_for_string(name)
         self.type_code_cache[typeid] = TypeCode.Struct
         self.type_size_cache[typeid] = size
@@ -503,7 +555,7 @@ class DumperBase():
         self.type_alignment_cache[typeid] = 8
         return typeid
 
-    def register_known_types(self):
+    def register_known_simple_types(self):
         typeid = 0
         self.typeid_cache[''] = typeid
         self.type_code_cache[typeid] = TypeCode.Void
@@ -563,6 +615,8 @@ class DumperBase():
 
         self.register_enum('@Qt::ItemDataRole', 4)
 
+    def register_known_qt_types(self):
+        #self.warn("REGISTERING KNOWN QT TYPES NOW")
         self.register_struct('@QObject', p5=2, p6=2, qobject_based=True)
         self.register_struct('@QObjectPrivate', p5=10, p6=10) # FIXME: Not exact
 
@@ -575,6 +629,9 @@ class DumperBase():
         self.register_struct('@QList<@QObject*>', p5=1, p6=3)
         self.register_struct('@QList<@QStandardItemData>', p5=1, p6=3)
         self.register_struct('@QList<@QRect>', p5=1, p6=3)
+
+        typeid_string_list = self.register_struct('@QList<@QString>', p5=1, p6=3)
+        self.register_typedef('@QStringList', typeid_string_list)
 
         typeid_var_list = self.register_struct('@QList<@QVariant>', p5=1, p6=3)
         self.register_typedef('@QVariantList', typeid_var_list)
@@ -661,7 +718,7 @@ class DumperBase():
                 c = ord(item[0])
                 if c in (45, 46) or (c >= 48 and c < 58):  # '-', '.' or digit.
                     if '.' in item:
-                        res.append(float(item))
+                        self.type_template_arguments_cache[(typeid, idx)] = float(item)
                     else:
                         if item.endswith('l'):
                             item = item[:-1]
@@ -680,9 +737,6 @@ class DumperBase():
     # Hex decoding operating on str, return str.
     @staticmethod
     def hexdecode(s, encoding='utf8'):
-        if sys.version_info[0] == 2:
-            # For python2 we need an extra str() call to return str instead of unicode
-            return str(s.decode('hex').decode(encoding))
         return bytes.fromhex(s).decode(encoding)
 
     # Hex encoding operating on str or bytes, return str.
@@ -690,10 +744,6 @@ class DumperBase():
     def hexencode(s):
         if s is None:
             s = ''
-        if sys.version_info[0] == 2:
-            if isinstance(s, buffer):
-                return bytes(s).encode('hex')
-            return s.encode('hex')
         if isinstance(s, str):
             s = s.encode('utf8')
         return hexencode_(s)
@@ -711,9 +761,9 @@ class DumperBase():
         return limit
 
     def vectorData(self, value):
-        if self.qtVersion() >= 0x060000:
+        if self.qtVersionAtLeast(0x060000):
             data, length, alloc = self.qArrayData(value)
-        elif self.qtVersion() >= 0x050000:
+        elif self.qtVersionAtLeast(0x050000):
             vector_data_ptr = self.extractPointer(value)
             if self.ptrSize() == 4:
                 (ref, length, alloc, offset) = self.split('IIIp', vector_data_ptr)
@@ -729,7 +779,7 @@ class DumperBase():
         return data, length
 
     def qArrayData(self, value):
-        if self.qtVersion() >= 0x60000:
+        if self.qtVersionAtLeast(0x60000):
             dd, data, length = self.split('ppp', value)
             if dd:
                 _, _, alloc = self.split('iip', dd)
@@ -740,7 +790,7 @@ class DumperBase():
 
     def qArrayDataHelper(self, array_data_ptr):
         # array_data_ptr is what is e.g. stored in a QByteArray's d_ptr.
-        if self.qtVersion() >= 0x050000:
+        if self.qtVersionAtLeast(0x050000):
             # QTypedArray:
             # - QtPrivate::RefCount ref
             # - int length
@@ -753,7 +803,7 @@ class DumperBase():
                 data = data & 0xffffffff
             else:
                 data = data & 0xffffffffffffffff
-        elif self.qtVersion() >= 0x040000:
+        elif self.qtVersionAtLeast(0x040000):
             # Data:
             # - QBasicAtomicInt ref;
             # - int alloc, length;
@@ -1018,12 +1068,11 @@ class DumperBase():
     def check(self, exp):
         if not exp:
             self.warn('Check failed: %s' % exp)
-            self.dump_location()
+            #self.dump_location()
             raise RuntimeError('Check failed: %s' % exp)
 
     def check_typeid(self, typeid):
         if not isinstance(typeid, int):
-            size = self.type_size_cache.get(typeid, None)
             raise RuntimeError('WRONG TYPE FOR TYPEID: %s %s' % (str(typeid), type(typeid)))
 
     def checkRef(self, ref):
@@ -1247,8 +1296,6 @@ class DumperBase():
         innerType = arrayType.target()
         #self.warn("ARRAY TYPE: %s" % arrayType)
         #self.warn("INNER TYPE: %s" % innerType)
-        if innerType is None:
-            innerType = value.type.target()
 
         address = value.address()
         if address:
@@ -1259,14 +1306,17 @@ class DumperBase():
 
         displayFormat = self.currentItemFormat()
         arrayByteSize = arrayType.size()
+        n = self.arrayItemCountFromTypeName(value.type.name, 100)
         if arrayByteSize == 0:
             # This should not happen. But it does, see QTCREATORBUG-14755.
             # GDB/GCC produce sizeof == 0 for QProcess arr[3]
             # And in the Nim string dumper.
-            itemCount = self.arrayItemCountFromTypeName(value.type.name, 100)
-            arrayByteSize = int(itemCount) * innerType.size()
+            arrayByteSize = n * innerType.size()
+        elif not self.isCdb:
+            # Do not check the inner type size for cdb since this requires a potentially expensive
+            # type lookup
+            n = arrayByteSize // innerType.size()
 
-        n = arrayByteSize // innerType.size()
         p = value.address()
         if displayFormat != DisplayFormat.Raw and p:
             if innerType.name in (
@@ -1382,8 +1432,9 @@ class DumperBase():
     # This is shared by pointer and array formatting.
     def tryPutSimpleFormattedPointer(self, ptr, typename, innerType, displayFormat, limit):
         if displayFormat == DisplayFormat.Automatic:
-            targetType = innerType
-            if innerType.code == TypeCode.Typedef:
+            if self.isCdb or innerType.code is not TypeCode.Typedef:
+                targetType = innerType
+            else:
                 targetType = innerType.target()
 
             if targetType.name in ('char', 'signed char', 'unsigned char', 'uint8_t', 'CHAR'):
@@ -1597,7 +1648,7 @@ class DumperBase():
 
             intSize = 4
             ptrSize = self.ptrSize()
-            if self.qtVersion() >= 0x060000:
+            if self.qtVersionAtLeast(0x060000):
                 # Size of QObjectData: 9 pointer + 2 int
                 #   - vtable
                 #   - QObject *q_ptr;
@@ -1618,7 +1669,7 @@ class DumperBase():
                 #   - QList<QPointer<QObject> > eventFilters;
                 #   - QString objectName
                 objectNameAddress = extra + 12 * ptrSize
-            elif self.qtVersion() >= 0x050000:
+            elif self.qtVersionAtLeast(0x050000):
                 # Size of QObjectData: 5 pointer + 2 int
                 #   - vtable
                 #   - QObject *q_ptr;
@@ -1811,7 +1862,7 @@ class DumperBase():
             # a Q_OBJECT SMO has a non-null superdata (unless it's QObject itself),
             # a Q_GADGET SMO has a null superdata (hopefully)
             if result and not isQObjectProper:
-                if self.qtVersion() >= 0x60000 and self.isWindowsTarget():
+                if self.qtVersionAtLeast(0x60000) and self.isWindowsTarget():
                     (direct, indirect) = self.split('pp', result)
                     # since Qt 6 there is an additional indirect super data getter on windows
                     if direct == 0 and indirect == 0:
@@ -1895,14 +1946,14 @@ class DumperBase():
         return result
 
     def listData(self, value, check=True):
-        if self.qtVersion() >= 0x60000:
+        if self.qtVersionAtLeast(0x60000):
             dd, data, size = self.split('ppi', value)
             return data, size
 
         base = self.extractPointer(value)
         (ref, alloc, begin, end) = self.split('IIII', base)
         array = base + 16
-        if self.qtVersion() < 0x50000:
+        if not self.qtVersionAtLeast(0x50000):
             array += self.ptrSize()
         size = end - begin
 
@@ -1941,7 +1992,7 @@ class DumperBase():
     def metaString(self, metaObjectPtr, index, revision):
         ptrSize = self.ptrSize()
         stringdataOffset = ptrSize
-        if self.isWindowsTarget() and self.qtVersion() >= 0x060000:
+        if self.isWindowsTarget() and self.qtVersionAtLeast(0x060000):
             stringdataOffset += ptrSize # indirect super data member
         stringdata = self.extract_pointer_at_address(int(metaObjectPtr) + stringdataOffset)
 
@@ -1970,19 +2021,19 @@ class DumperBase():
             self.putField('sortgroup', sortorder)
 
     def putQMetaStuff(self, value, origType):
-        if self.qtVersion() >= 0x060000:
+        if self.qtVersionAtLeast(0x060000):
             metaObjectPtr, handle = value.split('pp')
         else:
             metaObjectPtr, handle = value.split('pI')
         if metaObjectPtr != 0:
-            if self.qtVersion() >= 0x060000:
+            if self.qtVersionAtLeast(0x060000):
                 if handle == 0:
                     self.putEmptyValue()
                     return
                 revision = 9
                 name, alias, flags, keyCount, data = self.split('IIIII', handle)
                 index = name
-            elif self.qtVersion() >= 0x050000:
+            elif self.qtVersionAtLeast(0x050000):
                 revision = 7
                 dataPtr = self.extract_pointer_at_address(metaObjectPtr + 2 * self.ptrSize())
                 index = self.extractInt(dataPtr + 4 * handle)
@@ -2024,7 +2075,7 @@ class DumperBase():
 
         def extractDataPtr(someMetaObjectPtr):
             # dataPtr = metaObjectPtr['d']['data']
-            if self.qtVersion() >= 0x60000 and self.isWindowsTarget():
+            if self.qtVersionAtLeast(0x60000) and self.isWindowsTarget():
                 offset = 3
             else:
                 offset = 2
@@ -2054,13 +2105,13 @@ class DumperBase():
         extraData = 0
         if qobjectPtr:
             dd = self.extract_pointer_at_address(qobjectPtr + ptrSize)
-            if self.qtVersion() >= 0x60000:
+            if self.qtVersionAtLeast(0x60000):
                 (dvtablePtr, qptr, parent, children, bindingStorageData, bindingStatus,
                     flags, postedEvents, dynMetaObjectPtr, # Up to here QObjectData.
                     extraData, threadDataPtr, connectionListsPtr,
                     sendersPtr, currentSenderPtr) \
                     = self.split('pp{@QObject*}{@QList<@QObject *>}ppIIp' + 'ppppp', dd)
-            elif self.qtVersion() >= 0x50000:
+            elif self.qtVersionAtLeast(0x50000):
                 (dvtablePtr, qptr, parent, children, flags, postedEvents,
                     dynMetaObjectPtr,  # Up to here QObjectData.
                     extraData, threadDataPtr, connectionListsPtr,
@@ -2186,7 +2237,7 @@ typename))
                     with Children(self):
                         # Static properties.
                         for i in range(propertyCount):
-                            if self.qtVersion() >= 0x60000:
+                            if self.qtVersionAtLeast(0x60000):
                                 t = self.split('IIIII', dataPtr + properties * 4 + 20 * i)
                             else:
                                 t = self.split('III', dataPtr + properties * 4 + 12 * i)
@@ -2239,18 +2290,18 @@ typename))
                                     data += inner_size
 
                             variant_typeid = self.cheap_typeid_from_name('@QVariant')
-                            if self.qtVersion() >= 0x60000:
+                            if self.qtVersionAtLeast(0x60000):
                                 values = vectorGenerator(extraData + 3 * ptrSize, variant_typeid)
-                            elif self.qtVersion() >= 0x50600:
+                            elif self.qtVersionAtLeast(0x50600):
                                 values = vectorGenerator(extraData + 2 * ptrSize, variant_typeid)
-                            elif self.qtVersion() >= 0x50000:
+                            elif self.qtVersionAtLeast(0x50000):
                                 values = list5Generator(extraData + 2 * ptrSize, variant_typeid)
                             else:
                                 variantptr_typeid = self.cheap_typeid_from_name('@QVariant')
                                 values = list5Generator(extraData + 2 * ptrSize, variantptr_typeid)
 
                             bytearray_typeid = self.cheap_typeid_from_name('@QByteArray')
-                            if self.qtVersion() >= 0x60000:
+                            if self.qtVersionAtLeast(0x60000):
                                 names = list6Generator(extraData, bytearray_typeid)
                             else:
                                 names = list5Generator(extraData + ptrSize, bytearray_typeid)
@@ -2398,7 +2449,7 @@ typename))
         self.checkIntType(base)
         self.checkIntType(n)
         inner_typeid = self.typeid_for_typish(inner_typish)
-        inner_size = self.type_size_cache.get(inner_typeid, None)
+        inner_size = self.type_size(inner_typeid)
         self.putNumChild(n)
         #self.warn('ADDRESS: 0x%x INNERSIZE: %s INNERTYPE: %s' % (base, inner_size, inner_typeid))
         enc = self.type_encoding_cache.get(inner_typeid, None)
@@ -2671,10 +2722,7 @@ typename))
         try:
             if funcname.startswith('qdump__'):
                 typename = funcname[7:]
-                if sys.version_info > (3,):
-                    spec = inspect.getfullargspec(function)
-                else:
-                    spec = inspect.getargspec(function)
+                spec = inspect.getfullargspec(function)
                 if len(spec.args) == 2:
                     self.qqDumpers[typename] = function
                 elif len(spec.args) == 3 and len(spec.defaults) == 1:
@@ -2721,11 +2769,8 @@ typename))
     def reloadDumpers(self, args):
         for mod in self.dumpermodules:
             m = sys.modules[mod]
-            if sys.version_info[0] >= 3:
-                import importlib
-                importlib.reload(m)
-            else:
-                reload(m)
+            import importlib
+            importlib.reload(m)
         self.setupDumpers(args)
 
     def loadDumpers(self, args):
@@ -3368,13 +3413,6 @@ typename))
             return self.dumper.Type(self.dumper, self.dumper.type_target(self.typeid))
 
         @property
-        def targetName(self):
-            target = self.target()
-            if target is None:
-                return ''
-            return target if isinstance(target, str) else target.name
-
-        @property
         def moduleName(self):
             return self.dumper.type_modulename_cache.get(self.typeid, None)
 
@@ -3427,9 +3465,9 @@ typename))
             ):
                 return True
             if strippedName == 'QStringList':
-                return self.dumper.qtVersion() >= 0x050000
+                return self.dumper.qtVersionAtLeast(0x050000)
             if strippedName == 'QList':
-                return self.dumper.qtVersion() >= 0x050600
+                return self.dumper.qtVersionAtLeast(0x050600)
             return False
 
     class Field:
@@ -3523,7 +3561,9 @@ typename))
             return target_typeid
         self.type_code_cache[typeid] = TypeCode.Typedef
         self.type_target_cache[typeid] = target_typeid
-        self.type_size_cache[typeid] = self.type_size_cache.get(target_typeid, None)
+        size = self.type_size_cache.get(target_typeid, None)
+        if size is not None:
+            self.type_size_cache[typeid] = size
         return typeid
 
     def createType(self, typish, size=None):
@@ -3550,7 +3590,7 @@ typename))
         if typename.startswith('QList<') or typename.startswith('QVector<'):
             typeid = self.typeid_for_string(typename)
             if typeid:
-                size = 3 * self.ptrSize() if self.qtVersion() >= 0x060000 else self.ptrSize()
+                size = 3 * self.ptrSize() if self.qtVersionAtLeast(0x060000) else self.ptrSize()
                 self.type_code_cache[typeid] = TypeCode.Struct
                 self.type_size_cache[typeid] = size
                 return typeid
@@ -3669,15 +3709,15 @@ typename))
 
         typeid = self.cheap_typeid_from_name_nons(typename)
         if typeid:
-            size = self.type_size_cache.get(typeid, None)
+            size = self.type_size(typeid)
             if size is not None:
                 return size, typeid
 
         typeobj = self.lookupType(typename)
-        self.warn("LOOKUP FIELD TYPE: %s TYPEOBJ: %s" % (typename, typeobj))
+        #self.warn("LOOKUP FIELD TYPE: %s TYPEOBJ: %s" % (typename, typeobj))
         if typeobj is not None:
             typeid = typeobj.typeid
-            size = self.type_size_cache.get(typeid, None)
+            size = self.type_size(typeid)
             if size is not None:
                 return size, typeid
 
@@ -3908,8 +3948,10 @@ typename))
         if size is not None:
             return size
 
-        if size is None:
-            nativeType = self.type_nativetype(typeid)
+        nativeType = self.type_nativetype(typeid)
+        if self.isCdb:
+            size = nativeType.bitsize() // 8
+        else:
             if not self.type_size_cache.get(typeid):
                 self.from_native_type(nativeType)
             size = self.type_size_cache.get(typeid, None)
@@ -4160,7 +4202,7 @@ typename))
         res = self.readRawMemory(address, size)
         if len(res) > 0:
             return res
-        raise RuntimeError('CANNOT READ %d BYTES FROM ADDRESS: %s %s' % (size, address))
+        raise RuntimeError('CANNOT READ %d BYTES FROM ADDRESS: %s' % (size, address))
 
     def value_display(self, value):
         type_code = self.type_code(value.typeid)

@@ -22,6 +22,7 @@
 
 #include <utils/algorithm.h>
 #include <utils/environment.h>
+#include <utils/fileutils.h>
 #include <utils/qtcassert.h>
 #include <utils/stylehelper.h>
 
@@ -31,6 +32,8 @@
 #include <QQuickItem>
 #include <QShortcut>
 #include <QVBoxLayout>
+
+using namespace Core;
 
 namespace QmlDesigner {
 
@@ -186,15 +189,15 @@ MaterialBrowserWidget::MaterialBrowserWidget(AsynchronousImageCache &imageCache,
     setStyleSheet(Theme::replaceCssColors(
         QString::fromUtf8(Utils::FileReader::fetchQrc(":/qmldesigner/stylesheet.css"))));
 
-    m_qmlSourceUpdateShortcut = new QShortcut(QKeySequence(Qt::CTRL + Qt::Key_F8), this);
+    m_qmlSourceUpdateShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_F8), this);
     connect(m_qmlSourceUpdateShortcut, &QShortcut::activated, this, &MaterialBrowserWidget::reloadQmlSource);
 
-    connect(m_materialBrowserModel, &MaterialBrowserModel::isEmptyChanged, this, [&] {
+    connect(m_materialBrowserModel, &MaterialBrowserModel::isEmptyChanged, this, [this] {
         if (m_materialBrowserModel->isEmpty())
             focusMaterialSection(false);
     });
 
-    connect(m_materialBrowserTexturesModel, &MaterialBrowserTexturesModel::isEmptyChanged, this, [&] {
+    connect(m_materialBrowserTexturesModel, &MaterialBrowserTexturesModel::isEmptyChanged, this, [this] {
         if (m_materialBrowserTexturesModel->isEmpty())
             focusMaterialSection(true);
     });
@@ -212,6 +215,10 @@ MaterialBrowserWidget::MaterialBrowserWidget(AsynchronousImageCache &imageCache,
     reloadQmlSource();
 
     setFocusProxy(m_quickWidget->quickWidget());
+
+    IContext::attach(this,
+                     Context(Constants::C_QMLMATERIALBROWSER, Constants::C_QT_QUICK_TOOLS_MENU),
+                     [this](const IContext::HelpCallback &callback) { contextHelp(callback); });
 }
 
 void MaterialBrowserWidget::updateMaterialPreview(const ModelNode &node, const QPixmap &pixmap)
@@ -368,7 +375,19 @@ void MaterialBrowserWidget::addMaterialToContentLibrary()
 {
     ModelNode mat = m_materialBrowserModel->selectedMaterial();
     m_materialBrowserView->emitCustomNotification("add_material_to_content_lib", {mat},
-                                                  {m_previewImageProvider->getPixmap(mat)});
+                                                  {m_previewImageProvider->getPixmap(mat)}); // to ContentLibrary
+}
+
+void MaterialBrowserWidget::importMaterial()
+{
+    ModelNode mat = m_materialBrowserModel->selectedMaterial();
+    m_materialBrowserView->emitCustomNotification("import_bundle_to_project"); // to ContentLibrary
+}
+void MaterialBrowserWidget::exportMaterial()
+{
+    ModelNode mat = m_materialBrowserModel->selectedMaterial();
+    m_materialBrowserView->emitCustomNotification("export_material_as_bundle", {mat},
+                                                  {m_previewImageProvider->getPixmap(mat)}); // to ContentLibrary
 }
 
 QString MaterialBrowserWidget::qmlSourcesPath()

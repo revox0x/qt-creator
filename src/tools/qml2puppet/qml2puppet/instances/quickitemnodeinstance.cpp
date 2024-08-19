@@ -150,8 +150,6 @@ void QuickItemNodeInstance::initialize(const ObjectNodeInstance::Pointer &object
 
     if (instanceId() == 0)
         nodeInstanceServer()->setRootItem(quickItem());
-    else
-        quickItem()->setParentItem(nodeInstanceServer()->rootItem());
 
     ObjectNodeInstance::initialize(objectNodeInstance, flags);
 }
@@ -180,6 +178,10 @@ void QuickItemNodeInstance::doComponentComplete()
     QQmlProperty contentItemProperty(quickItem(), "contentItem", engine());
     if (contentItemProperty.isValid())
         m_contentItem = contentItemProperty.read().value<QQuickItem*>();
+
+    QQmlProperty composedEffectProperty(quickItem(), "_isEffectItem", engine());
+    if (composedEffectProperty.isValid())
+        m_isComposedEffect = true;
 
     quickItem()->update();
 }
@@ -217,7 +219,7 @@ QStringList QuickItemNodeInstance::allStates() const
 {
     QStringList list;
 
-    QList<QObject*> stateList = QQuickDesignerSupport::statesForItem(quickItem());
+    QObjectList stateList = QQuickDesignerSupport::statesForItem(quickItem());
     for (QObject *state : stateList) {
         QQmlProperty property(state, "name");
         if (property.isValid())
@@ -490,10 +492,15 @@ bool QuickItemNodeInstance::isRenderable() const
     return quickItem() && (!s_unifiedRenderPath || isRootNodeInstance());
 }
 
+bool QuickItemNodeInstance::isComposedEffect() const
+{
+    return m_isComposedEffect;
+}
+
 QList<ServerNodeInstance> QuickItemNodeInstance::stateInstances() const
 {
     QList<ServerNodeInstance> instanceList;
-    const QList<QObject*> stateList = QQuickDesignerSupport::statesForItem(quickItem());
+    const QObjectList stateList = QQuickDesignerSupport::statesForItem(quickItem());
     for (QObject *state : stateList)
     {
         if (state && nodeInstanceServer()->hasInstanceForObject(state))

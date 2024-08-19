@@ -71,7 +71,7 @@ void GlobalOrProjectAspect::setProjectSettings(AspectContainer *settings)
 void GlobalOrProjectAspect::setGlobalSettings(AspectContainer *settings)
 {
     m_globalSettings = settings;
-    m_projectSettings->setAutoApply(false);
+    m_globalSettings->setAutoApply(false);
 }
 
 void GlobalOrProjectAspect::setUsingGlobalSettings(bool value)
@@ -173,6 +173,9 @@ RunConfiguration::RunConfiguration(Target *target, Utils::Id id)
 
 
     m_commandLineGetter = [this] {
+        Launcher launcher;
+        if (const auto launcherAspect = aspect<LauncherAspect>())
+            launcher = launcherAspect->currentLauncher();
         FilePath executable;
         if (const auto executableAspect = aspect<ExecutableAspect>())
             executable = executableAspect->executable();
@@ -180,7 +183,14 @@ RunConfiguration::RunConfiguration(Target *target, Utils::Id id)
         if (const auto argumentsAspect = aspect<ArgumentsAspect>())
             arguments = argumentsAspect->arguments();
 
-        return CommandLine{executable, arguments, CommandLine::Raw};
+        if (launcher.command.isEmpty())
+            return CommandLine{executable, arguments, CommandLine::Raw};
+
+        CommandLine launcherCommand(launcher.command, launcher.arguments);
+        launcherCommand.addArg(executable.toString());
+        launcherCommand.addArgs(arguments, CommandLine::Raw);
+
+        return launcherCommand;
     };
 }
 
@@ -301,13 +311,14 @@ void RunConfiguration::toMap(Store &map) const
 void RunConfiguration::toMapSimple(Store &map) const
 {
     ProjectConfiguration::toMap(map);
-    map.insert(BUILD_KEY, m_buildKey);
 
-    // FIXME: Remove this id mangling, e.g. by using a separate entry for the build key.
-    if (!m_buildKey.isEmpty()) {
-        const Utils::Id mangled = id().withSuffix(m_buildKey);
-        map.insert(settingsIdKey(), mangled.toSetting());
+    if (m_usesEmptyBuildKeys) {
+        QTC_CHECK(m_buildKey.isEmpty());
+    } else {
+        QTC_CHECK(!m_buildKey.isEmpty());
     }
+
+    map.insert(BUILD_KEY, m_buildKey);
 }
 
 void RunConfiguration::setCommandLineGetter(const CommandLineGetter &cmdGetter)
@@ -368,15 +379,10 @@ void RunConfiguration::fromMap(const Store &map)
     m_customized = m_customized || map.value(CUSTOMIZED_KEY, false).toBool();
     m_buildKey = map.value(BUILD_KEY).toString();
 
-    if (m_buildKey.isEmpty()) {
-        const Utils::Id mangledId = Utils::Id::fromSetting(map.value(settingsIdKey()));
-        m_buildKey = mangledId.suffixAfter(id());
-
-        // Hack for cmake projects 4.10 -> 4.11.
-        const QString magicSeparator = "///::///";
-        const int magicIndex = m_buildKey.indexOf(magicSeparator);
-        if (magicIndex != -1)
-            m_buildKey = m_buildKey.mid(magicIndex + magicSeparator.length());
+    if (m_usesEmptyBuildKeys) {
+        QTC_CHECK(m_buildKey.isEmpty());
+    } else {
+        QTC_CHECK(!m_buildKey.isEmpty());
     }
 }
 

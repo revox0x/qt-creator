@@ -41,6 +41,8 @@
 #include <QVBoxLayout>
 #include <QWheelEvent>
 
+using namespace Core;
+
 namespace QmlDesigner {
 
 namespace {
@@ -292,6 +294,10 @@ FormEditorWidget::FormEditorWidget(FormEditorView *view)
 
     QByteArray sheet = Utils::FileReader::fetchQrc(":/qmldesigner/stylesheet.css");
     setStyleSheet(Theme::replaceCssColors(QString::fromUtf8(sheet)));
+
+    IContext::attach(this,
+                     Context(Constants::C_QMLFORMEDITOR, Constants::C_QT_QUICK_TOOLS_MENU),
+                     [this](const IContext::HelpCallback &callback) { contextHelp(callback); });
 }
 
 void FormEditorWidget::changeTransformTool(bool checked)
@@ -324,24 +330,14 @@ void FormEditorWidget::changeRootItemHeight(const QString &heighText)
     }
 }
 
-namespace {
-constexpr AuxiliaryDataKeyView formeditorColorProperty{AuxiliaryDataType::Temporary,
-                                                       "formeditorColor"};
-}
-
 void FormEditorWidget::changeBackgound(const QColor &color)
 {
-    if (color.alpha() == 0) {
+    if (color.alpha() == 0)
         m_graphicsView->activateCheckboardBackground();
-        if (m_formEditorView->rootModelNode().hasAuxiliaryData(formeditorColorProperty)) {
-            m_formEditorView->rootModelNode().setAuxiliaryDataWithoutLock(formeditorColorProperty,
-                                                                          {});
-        }
-    } else {
+    else
         m_graphicsView->activateColoredBackground(color);
-        m_formEditorView->rootModelNode().setAuxiliaryDataWithoutLock(formeditorColorProperty,
-                                                                      color);
-    }
+
+    m_formEditorView->rootModelNode().setAuxiliaryDataWithoutLock(formeditorColorProperty, color);
 }
 
 void FormEditorWidget::registerActionAsCommand(
@@ -402,8 +398,12 @@ void FormEditorWidget::updateActions()
             m_backgroundAction->setColor(Qt::transparent);
         }
 
-        if (m_formEditorView->rootModelNode().hasAuxiliaryData(contextImageProperty))
+        if (m_formEditorView->rootModelNode().hasAuxiliaryData(contextImageProperty)) {
+            m_backgroundAction->setColorEnabled(BackgroundAction::ContextImage, true);
             m_backgroundAction->setColor(BackgroundAction::ContextImage);
+        } else {
+            m_backgroundAction->setColorEnabled(BackgroundAction::ContextImage, false);
+        }
 
     } else {
         m_rootWidthAction->clearLineEditText();

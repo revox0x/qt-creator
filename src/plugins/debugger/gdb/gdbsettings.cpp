@@ -127,7 +127,6 @@ GdbSettings::GdbSettings()
 
     gdbStartupCommands.setSettingsKey(debugModeGroup, "GdbStartupCommands");
     gdbStartupCommands.setDisplayStyle(StringAspect::TextEditDisplay);
-    gdbStartupCommands.setUseGlobalMacroExpander();
     gdbStartupCommands.setToolTip("<html><head/><body><p>" + Tr::tr(
         "GDB commands entered here will be executed after "
         "GDB has been started, but before the debugged program is started or "
@@ -136,7 +135,6 @@ GdbSettings::GdbSettings()
 
     gdbPostAttachCommands.setSettingsKey(debugModeGroup, "GdbPostAttachCommands");
     gdbPostAttachCommands.setDisplayStyle(StringAspect::TextEditDisplay);
-    gdbPostAttachCommands.setUseGlobalMacroExpander();
     gdbPostAttachCommands.setToolTip("<html><head/><body><p>" + Tr::tr(
         "GDB commands entered here will be executed after "
         "GDB has successfully attached to remote targets.</p>"
@@ -168,7 +166,7 @@ GdbSettings::GdbSettings()
 
     useDebugInfoD.setSettingsKey("UseDebugInfoD");
     useDebugInfoD.setLabelText(Tr::tr("Use debug info daemon"));
-    useDebugInfoD.setOptionText(TriState::DefaultValue, tr("Use system settings"));
+    useDebugInfoD.setOptionText(TriState::DefaultValue, Tr::tr("Use system settings"));
     useDebugInfoD.setToolTip(Tr::tr("Lets GDB attempt to automatically retrieve "
                                     "debug information for system packages."));
 

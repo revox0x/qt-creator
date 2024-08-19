@@ -97,7 +97,7 @@ using MemoryMarkupList = QList<MemoryMarkup>;
 // over the children.
 
 using ColorNumberToolTip = QPair<int, QString>;
-using ColorNumberToolTips = QVector<ColorNumberToolTip>;
+using ColorNumberToolTips = QList<ColorNumberToolTip>;
 
 struct TypeInfo
 {
@@ -1827,6 +1827,7 @@ bool WatchModel::contextMenuEvent(const ItemViewEvent &ev)
     menu->addAction(s.settingsDialog.action());
 
     // useDebuggingHelpers/useDynamicType have no auto-apply, but need to be persisted on triggered
+    connect(this, &WatchModel::dataChanged, menu, &QMenu::close);
     connect(debugHelperAction, &QAction::triggered,
             &s.useDebuggingHelpers, &BoolAspect::writeSettings, Qt::UniqueConnection);
     connect(dynamicTypeAction, &QAction::triggered,

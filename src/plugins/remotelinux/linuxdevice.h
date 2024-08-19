@@ -20,8 +20,6 @@ public:
 
     static Ptr create() { return Ptr(new LinuxDevice); }
 
-    IDevice::Ptr clone() const override;
-
     ProjectExplorer::IDeviceWidget *createWidget() override;
 
     bool canCreateProcessModel() const override { return true; }
@@ -48,12 +46,12 @@ public:
     QString deviceStateToString() const override;
 
     bool isDisconnected() const;
-    void setDisconnected(bool disconnected);
-
     bool tryToConnect();
 
 protected:
     LinuxDevice();
+
+    Utils::BoolAspect disconnected{this};
 
     void _setOsType(Utils::OsType osType);
 

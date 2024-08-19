@@ -15,7 +15,6 @@
 #include <coreplugin/messagemanager.h>
 #include <coreplugin/progressmanager/progressmanager.h>
 
-#include <texteditor/codeassist/textdocumentmanipulatorinterface.h>
 #include <texteditor/refactoringchanges.h>
 #include <texteditor/textdocument.h>
 #include <texteditor/texteditor.h>
@@ -100,19 +99,17 @@ bool applyTextEdits(const Client *client,
     return file->apply(editsToChangeSet(edits, file->document()));
 }
 
-void applyTextEdit(TextDocumentManipulatorInterface &manipulator,
-                   const TextEdit &edit,
-                   bool newTextIsSnippet)
+void applyTextEdit(TextEditorWidget *editorWidget, const TextEdit &edit, bool newTextIsSnippet)
 {
     const Range range = edit.range();
-    const QTextDocument *doc = manipulator.textCursorAt(manipulator.currentPosition()).document();
+    const QTextDocument *doc = editorWidget->document();
     const int start = Text::positionInText(doc, range.start().line() + 1, range.start().character() + 1);
     const int end = Text::positionInText(doc, range.end().line() + 1, range.end().character() + 1);
     if (newTextIsSnippet) {
-        manipulator.replace(start, end - start, {});
-        manipulator.insertCodeSnippet(start, edit.newText(), &parseSnippet);
+        editorWidget->replace(start, end - start, {});
+        editorWidget->insertCodeSnippet(start, edit.newText(), &parseSnippet);
     } else {
-        manipulator.replace(start, end - start, edit.newText());
+        editorWidget->replace(start, end - start, edit.newText());
     }
 }
 
@@ -256,7 +253,7 @@ void updateEditorToolBar(Core::IEditor *editor)
             auto menu = new QMenu;
             auto clientsGroup = new QActionGroup(menu);
             clientsGroup->setExclusive(true);
-            for (auto client : LanguageClientManager::clientsSupportingDocument(document)) {
+            for (auto client : LanguageClientManager::clientsSupportingDocument(document, false)) {
                 auto action = clientsGroup->addAction(client->name());
                 auto reopen = [action, client = QPointer(client), document] {
                     if (!client)
@@ -266,6 +263,10 @@ void updateEditorToolBar(Core::IEditor *editor)
                 };
                 action->setCheckable(true);
                 action->setChecked(client == LanguageClientManager::clientForDocument(document));
+                action->setEnabled(client->reachable());
+                QObject::connect(client, &Client::stateChanged, action, [action, client] {
+                    action->setEnabled(client->reachable());
+                });
                 QObject::connect(action, &QAction::triggered, reopen);
             }
             menu->addActions(clientsGroup->actions());

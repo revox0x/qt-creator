@@ -16,16 +16,12 @@ add_qtc_plugin(Android
     androidextralibrarylistmodel.cpp androidextralibrarylistmodel.h
     androidglobal.h
     androidmanager.cpp androidmanager.h
-    androidmanifestdocument.cpp androidmanifestdocument.h
     androidmanifesteditor.cpp androidmanifesteditor.h
-    androidmanifesteditorfactory.cpp androidmanifesteditorfactory.h
-    androidmanifesteditorwidget.cpp androidmanifesteditorwidget.h
     androidmanifesteditoriconwidget.cpp androidmanifesteditoriconwidget.h
     androidmanifesteditoriconcontainerwidget.cpp androidmanifesteditoriconcontainerwidget.h
     androidpackageinstallationstep.cpp androidpackageinstallationstep.h
     androidplugin.cpp
     androidpotentialkit.cpp androidpotentialkit.h
-    androidqmlpreviewworker.cpp androidqmlpreviewworker.h
     androidqmltoolingsupport.cpp androidqmltoolingsupport.h
     androidqtversion.cpp androidqtversion.h
     androidrunconfiguration.cpp androidrunconfiguration.h
@@ -49,7 +45,6 @@ add_qtc_plugin(Android
     javalanguageserver.cpp javalanguageserver.h
     javaparser.cpp javaparser.h
     splashscreencontainerwidget.cpp splashscreencontainerwidget.h
-    splashscreenwidget.cpp splashscreenwidget.h
     sdkmanageroutputparser.cpp sdkmanageroutputparser.h
 )
 

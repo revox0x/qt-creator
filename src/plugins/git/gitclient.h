@@ -10,11 +10,10 @@
 #include <coreplugin/editormanager/ieditor.h>
 #include <coreplugin/iversioncontrol.h>
 
-#include <utils/fileutils.h>
+#include <texteditor/texteditorconstants.h>
 
 #include <vcsbase/vcsbaseclient.h>
 
-#include <QObject>
 #include <QStringList>
 #include <QVersionNumber>
 #include <QWidget>
@@ -23,19 +22,9 @@ QT_BEGIN_NAMESPACE
 class QMenu;
 QT_END_NAMESPACE
 
-namespace Core { class ICore; }
 namespace Tasking { class GroupItem; }
 
-namespace DiffEditor {
-class ChunkSelection;
-class DiffEditorController;
-}
-
-namespace VcsBase {
-class SubmitFileModel;
-class VcsBaseEditorWidget;
-class VcsCommand;
-}
+namespace VcsBase { class SubmitFileModel; }
 
 namespace Git::Internal {
 
@@ -352,6 +341,8 @@ public:
 
     void readConfigAsync(const Utils::FilePath &workingDirectory, const QStringList &arguments,
                          const VcsBase::CommandHandler &handler) const;
+
+    static QString styleColorName(TextEditor::TextStyle style);
 
 private:
     static GitSettings &settings();

@@ -14,9 +14,12 @@ Product {
             "android/**/*",
             "cplusplus/**/*",
             "debugger/**/*",
+            "debugger-with-python2/**/*",
             "designer/**/*",
             "glsl/**/*",
             "jsonschemas/**/*",
+            "lua-lupdate/**/*",
+            "lua-plugins/**/*",
             "modeleditor/**/*",
             "qml/**/*",
             "qmldesigner/**/*",
@@ -34,6 +37,7 @@ Product {
             "qml-type-descriptions/qbs-bundle.json",
             "qml-type-descriptions/qbs.qmltypes",
             "debugger/**/__pycache__/*",
+            "debugger-with-python2/**/__pycache__/*",
         ]
     }
 
@@ -56,8 +60,6 @@ Product {
         prefix: project.ide_source_tree + "/src/share/qtcreator/externaltools/"
         files: {
             var list = [
-                "lrelease.xml",
-                "lupdate.xml",
                 "qml.xml",
             ]
             if (qbs.targetOS.contains("windows"))

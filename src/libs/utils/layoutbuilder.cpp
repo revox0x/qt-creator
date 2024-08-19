@@ -232,10 +232,17 @@ LayoutItem::LayoutItem() = default;
 
 LayoutItem::~LayoutItem() = default;
 
-LayoutItem::LayoutItem(const LayoutModifier &inner)
-{
-    ownerModifier = inner;
-}
+LayoutItem::LayoutItem(QLayout *l)
+    : layout(l), empty(!l)
+{}
+
+LayoutItem::LayoutItem(QWidget *w)
+    : widget(w), empty(!w)
+{}
+
+LayoutItem::LayoutItem(const QString &t)
+    : text(t), empty(t.isEmpty())
+{}
 
 /*!
     \fn  template <class T> LayoutItem(const T &t)
@@ -355,7 +362,7 @@ void Layout::setContentsMargins(int left, int top, int right, int bottom)
 }
 
 /*!
-    Attaches the constructed layout to the provided QWidget \a w.
+    Attaches the constructed layout to the provided QWidget \a widget.
 
     This operation can only be performed once per LayoutBuilder instance.
  */
@@ -366,7 +373,7 @@ void Layout::attachTo(QWidget *widget)
 }
 
 /*!
-    Adds the layout item \a item as sub items.
+    Adds the layout item \a item as a sub item.
  */
 void Layout::addItem(I item)
 {
@@ -428,31 +435,23 @@ void addToWidget(Widget *widget, const Layout &layout)
 
 void addToLayout(Layout *layout, const Widget &inner)
 {
-    LayoutItem item;
-    item.widget = access(&inner);
-    layout->addLayoutItem(item);
+    layout->addLayoutItem(access(&inner));
 }
 
 void addToLayout(Layout *layout, QWidget *inner)
 {
-    LayoutItem item;
-    item.widget = inner;
-    layout->addLayoutItem(item);
+    layout->addLayoutItem(inner);
 }
 
 void addToLayout(Layout *layout, QLayout *inner)
 {
-    LayoutItem item;
-    item.layout = inner;
-    layout->addLayoutItem(item);
+    layout->addLayoutItem(inner);
 }
 
 void addToLayout(Layout *layout, const Layout &inner)
 {
     inner.flush_();
-    LayoutItem item;
-    item.layout = access(&inner);
-    layout->addLayoutItem(item);
+    layout->addLayoutItem(access(&inner));
 }
 
 void addToLayout(Layout *layout, const LayoutModifier &inner)
@@ -462,9 +461,7 @@ void addToLayout(Layout *layout, const LayoutModifier &inner)
 
 void addToLayout(Layout *layout, const QString &inner)
 {
-    LayoutItem item;
-    item.text = inner;
-    layout->addLayoutItem(item);
+    layout->addLayoutItem(inner);
 }
 
 void empty(Layout *layout)
@@ -890,6 +887,21 @@ Splitter::Splitter(std::initializer_list<I> ps)
     ptr = new Implementation;
     access(this)->setOrientation(Qt::Vertical);
     apply(this, ps);
+}
+
+void Splitter::setOrientation(Qt::Orientation orientation)
+{
+    access(this)->setOrientation(orientation);
+}
+
+void Splitter::setStretchFactor(int index, int stretch)
+{
+    access(this)->setStretchFactor(index, stretch);
+}
+
+void Splitter::setChildrenCollapsible(bool collapsible)
+{
+    access(this)->setChildrenCollapsible(collapsible);
 }
 
 void addToSplitter(Splitter *splitter, QWidget *inner)

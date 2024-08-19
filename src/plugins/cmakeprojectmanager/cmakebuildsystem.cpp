@@ -45,6 +45,7 @@
 
 #include <utils/algorithm.h>
 #include <utils/checkablemessagebox.h>
+#include <utils/fileutils.h>
 #include <utils/macroexpander.h>
 #include <utils/mimeconstants.h>
 #include <utils/qtcprocess.h>
@@ -84,11 +85,11 @@ CMakeBuildSystem::CMakeBuildSystem(CMakeBuildConfiguration *bc)
         // Cache mime check result for speed up
         if (!isIgnored) {
             if (auto it = m_mimeBinaryCache.get<std::optional<bool>>(
-                [mimeType](const QHash<QString, bool> &cache) -> std::optional<bool> {
-                    auto it = cache.find(mimeType.name());
-                    if (it != cache.end())
-                        return *it;
-                    return {};
+                    [mimeType](const QHash<QString, bool> &cache) -> std::optional<bool> {
+                        auto cache_it = cache.find(mimeType.name());
+                        if (cache_it != cache.end())
+                            return *cache_it;
+                        return {};
                     })) {
                 isIgnored = *it;
             } else {
@@ -399,12 +400,10 @@ static SnippetAndLocation generateSnippetAndLocationForSources(
 static expected_str<bool> insertSnippetSilently(const FilePath &cmakeFile,
                                                 const SnippetAndLocation &snippetLocation)
 {
-    BaseTextEditor *editor = qobject_cast<BaseTextEditor *>(
-        Core::EditorManager::openEditorAt({cmakeFile,
-                                           int(snippetLocation.line),
-                                           int(snippetLocation.column)},
-                                          Constants::CMAKE_EDITOR_ID,
-                                          Core::EditorManager::DoNotMakeVisible));
+    BaseTextEditor *editor = qobject_cast<BaseTextEditor *>(Core::EditorManager::openEditorAt(
+        {cmakeFile, int(snippetLocation.line), int(snippetLocation.column)},
+        Constants::CMAKE_EDITOR_ID,
+        Core::EditorManager::DoNotMakeVisible | Core::EditorManager::DoNotChangeCurrentEditor));
     if (!editor) {
         return make_unexpected("BaseTextEditor cannot be obtained for " + cmakeFile.toUserOutput()
                                + ":" + QString::number(snippetLocation.line) + ":"
@@ -642,6 +641,25 @@ bool CMakeBuildSystem::addTsFiles(Node *context, const FilePaths &filePaths, Fil
     return false;
 }
 
+static bool isGlobbingFunction(const cmListFile &cmakeListFile, const cmListFileFunction &func)
+{
+    // Check if the filename is part of globbing variable result
+    const auto globFunctions = std::get<0>(
+        Utils::partition(cmakeListFile.Functions, [](const auto &f) {
+            return f.LowerCaseName() == "file" && f.Arguments().size() > 2
+                   && (f.Arguments().front().Value == "GLOB"
+                       || f.Arguments().front().Value == "GLOB_RECURSE");
+        }));
+
+    const auto globVariables = Utils::transform<QSet>(globFunctions, [](const auto &func) {
+        return std::string("${") + func.Arguments()[1].Value + "}";
+    });
+
+    return Utils::anyOf(func.Arguments(), [globVariables](const auto &arg) {
+        return globVariables.contains(arg.Value);
+    });
+}
+
 bool CMakeBuildSystem::addSrcFiles(Node *context, const FilePaths &filePaths, FilePaths *notAdded)
 {
     if (notAdded)
@@ -670,26 +688,32 @@ bool CMakeBuildSystem::addSrcFiles(Node *context, const FilePaths &filePaths, Fi
             return false;
         }
 
-        const std::string target_name = function->Arguments().front().Value;
-        auto qtAddModule = [target_name](const auto &func) {
-            return (func.LowerCaseName() == "qt_add_qml_module"
-                    || func.LowerCaseName() == "qt6_add_qml_module")
-                    && func.Arguments().front().Value == target_name;
-        };
-        // Special case: when qt_add_executable and qt_add_qml_module use the same target name
-        // then qt_add_qml_module function should be used
-        function = findFunction(*cmakeListFile, qtAddModule).value_or(*function);
+        const bool haveGlobbing = isGlobbingFunction(cmakeListFile.value(), function.value());
+        n->setVisibleAfterAddFileAction(!haveGlobbing);
+        if (haveGlobbing && settings(project()).autorunCMake()) {
+            runCMake();
+        } else {
+            const std::string target_name = function->Arguments().front().Value;
+            auto qtAddModule = [target_name](const auto &func) {
+                return (func.LowerCaseName() == "qt_add_qml_module"
+                        || func.LowerCaseName() == "qt6_add_qml_module")
+                        && func.Arguments().front().Value == target_name;
+            };
+            // Special case: when qt_add_executable and qt_add_qml_module use the same target name
+            // then qt_add_qml_module function should be used
+            function = findFunction(*cmakeListFile, qtAddModule).value_or(*function);
 
-        const QString newSourceFiles = newFilesForFunction(function->LowerCaseName(),
-                                                           filePaths,
-                                                           n->filePath().canonicalPath());
+            const QString newSourceFiles = newFilesForFunction(function->LowerCaseName(),
+                                                               filePaths,
+                                                               n->filePath().canonicalPath());
 
-        const SnippetAndLocation snippetLocation = generateSnippetAndLocationForSources(
-                    newSourceFiles, *cmakeListFile, *function, targetName);
-        expected_str<bool> inserted = insertSnippetSilently(targetCMakeFile, snippetLocation);
-        if (!inserted) {
-            qCCritical(cmakeBuildSystemLog) << inserted.error();
-            return false;
+            const SnippetAndLocation snippetLocation = generateSnippetAndLocationForSources(
+                        newSourceFiles, *cmakeListFile, *function, targetName);
+            expected_str<bool> inserted = insertSnippetSilently(targetCMakeFile, snippetLocation);
+            if (!inserted) {
+                qCCritical(cmakeBuildSystemLog) << inserted.error();
+                return false;
+            }
         }
 
         if (notAdded)
@@ -770,22 +794,7 @@ CMakeBuildSystem::projectFileArgumentPosition(const QString &targetName, const Q
             return ProjectFileArgumentPosition{filePathArgument, targetCMakeFile, fileName};
         } else {
             // Check if the filename is part of globbing variable result
-            const auto globFunctions = std::get<0>(
-                Utils::partition(cmakeListFile->Functions, [](const auto &f) {
-                    return f.LowerCaseName() == "file" && f.Arguments().size() > 2
-                           && (f.Arguments().front().Value == "GLOB"
-                               || f.Arguments().front().Value == "GLOB_RECURSE");
-                }));
-
-            const auto globVariables = Utils::transform<QSet>(globFunctions, [](const auto &func) {
-                return std::string("${") + func.Arguments()[1].Value + "}";
-            });
-
-            const auto haveGlobbing = Utils::anyOf(func->Arguments(),
-                                                   [globVariables](const auto &arg) {
-                                                       return globVariables.contains(arg.Value);
-                                                   });
-
+            const auto haveGlobbing = isGlobbingFunction(cmakeListFile.value(), func.value());
             if (haveGlobbing) {
                 return ProjectFileArgumentPosition{filePathArgument,
                                                    targetCMakeFile,
@@ -833,6 +842,7 @@ RemovedFilesFromProject CMakeBuildSystem::removeFiles(Node *context,
         const FilePath projDir = n->filePath().canonicalPath();
         const QString targetName = n->buildKey();
 
+        bool haveGlobbing = false;
         for (const auto &file : filePaths) {
             const QString fileName
                 = file.canonicalPath().relativePathFrom(projDir).cleanPath().toString();
@@ -847,13 +857,19 @@ RemovedFilesFromProject CMakeBuildSystem::removeFiles(Node *context,
                     continue;
                 }
 
+                if (filePos.value().fromGlobbing) {
+                    haveGlobbing = true;
+                    continue;
+                }
+
                 BaseTextEditor *editor = qobject_cast<BaseTextEditor *>(
-                    Core::EditorManager::openEditorAt({filePos.value().cmakeFile,
-                                                       static_cast<int>(filePos.value().argumentPosition.Line),
-                                                       static_cast<int>(filePos.value().argumentPosition.Column
-                                                                        - 1)},
-                                                      Constants::CMAKE_EDITOR_ID,
-                                                      Core::EditorManager::DoNotMakeVisible));
+                    Core::EditorManager::openEditorAt(
+                        {filePos.value().cmakeFile,
+                         static_cast<int>(filePos.value().argumentPosition.Line),
+                         static_cast<int>(filePos.value().argumentPosition.Column - 1)},
+                        Constants::CMAKE_EDITOR_ID,
+                        Core::EditorManager::DoNotMakeVisible
+                            | Core::EditorManager::DoNotChangeCurrentEditor));
                 if (!editor) {
                     badFiles << file;
 
@@ -869,8 +885,7 @@ RemovedFilesFromProject CMakeBuildSystem::removeFiles(Node *context,
                 if (filePos->argumentPosition.Delim == cmListFileArgument::Quoted)
                     extraChars = 2;
 
-                if (!filePos.value().fromGlobbing)
-                    editor->replace(filePos.value().relativeFileName.length() + extraChars, "");
+                editor->replace(filePos.value().relativeFileName.length() + extraChars, "");
 
                 editor->editorWidget()->autoIndent();
                 if (!Core::DocumentManager::saveDocument(editor->document())) {
@@ -888,6 +903,9 @@ RemovedFilesFromProject CMakeBuildSystem::removeFiles(Node *context,
 
         if (notRemoved && !badFiles.isEmpty())
             *notRemoved = badFiles;
+
+        if (haveGlobbing && settings(project()).autorunCMake())
+            runCMake();
 
         return badFiles.isEmpty() ? RemovedFilesFromProject::Ok : RemovedFilesFromProject::Error;
     }
@@ -936,10 +954,6 @@ bool CMakeBuildSystem::renameFile(Node *context,
         const FilePath newRelPath = newFilePath.canonicalPath().relativePathFrom(projDir).cleanPath();
         const QString newRelPathName = newRelPath.toString();
 
-        // FilePath needs the file to exist on disk, the old file has already been renamed
-        const QString oldRelPathName
-            = newRelPath.parentDir().pathAppended(oldFilePath.fileName()).cleanPath().toString();
-
         const QString targetName = n->buildKey();
         const QString key
             = QStringList{projDir.path(), targetName, oldFilePath.path(), newFilePath.path()}.join(
@@ -953,39 +967,47 @@ bool CMakeBuildSystem::renameFile(Node *context,
             return false;
         }
 
+        bool haveGlobbing = false;
         do {
-            BaseTextEditor *editor = qobject_cast<BaseTextEditor *>(
-                Core::EditorManager::openEditorAt(
-                    {fileToRename->cmakeFile,
-                     static_cast<int>(fileToRename->argumentPosition.Line),
-                     static_cast<int>(fileToRename->argumentPosition.Column - 1)},
-                    Constants::CMAKE_EDITOR_ID,
-                    Core::EditorManager::DoNotMakeVisible));
-            if (!editor) {
-                qCCritical(cmakeBuildSystemLog).noquote()
-                    << "BaseTextEditor cannot be obtained for" << fileToRename->cmakeFile.path()
-                    << fileToRename->argumentPosition.Line
-                    << int(fileToRename->argumentPosition.Column);
-                return false;
-            }
+            if (!fileToRename->fromGlobbing) {
+                BaseTextEditor *editor = qobject_cast<BaseTextEditor *>(
+                    Core::EditorManager::openEditorAt(
+                        {fileToRename->cmakeFile,
+                         static_cast<int>(fileToRename->argumentPosition.Line),
+                         static_cast<int>(fileToRename->argumentPosition.Column - 1)},
+                        Constants::CMAKE_EDITOR_ID,
+                        Core::EditorManager::DoNotMakeVisible
+                            | Core::EditorManager::DoNotChangeCurrentEditor));
+                if (!editor) {
+                    qCCritical(cmakeBuildSystemLog).noquote()
+                        << "BaseTextEditor cannot be obtained for" << fileToRename->cmakeFile.path()
+                        << fileToRename->argumentPosition.Line
+                        << int(fileToRename->argumentPosition.Column);
+                    return false;
+                }
 
-            // If quotes were used for the source file, skip the starting quote
-            if (fileToRename->argumentPosition.Delim == cmListFileArgument::Quoted)
-                editor->setCursorPosition(editor->position() + 1);
+                // If quotes were used for the source file, skip the starting quote
+                if (fileToRename->argumentPosition.Delim == cmListFileArgument::Quoted)
+                    editor->setCursorPosition(editor->position() + 1);
 
-            if (!fileToRename->fromGlobbing)
                 editor->replace(fileToRename->relativeFileName.length(), newRelPathName);
 
-            editor->editorWidget()->autoIndent();
-            if (!Core::DocumentManager::saveDocument(editor->document())) {
-                qCCritical(cmakeBuildSystemLog).noquote()
-                    << "Changes to" << fileToRename->cmakeFile.path() << "could not be saved.";
-                return false;
+                editor->editorWidget()->autoIndent();
+                if (!Core::DocumentManager::saveDocument(editor->document())) {
+                    qCCritical(cmakeBuildSystemLog).noquote()
+                        << "Changes to" << fileToRename->cmakeFile.path() << "could not be saved.";
+                    return false;
+                }
+            } else {
+                haveGlobbing = true;
             }
 
             // Try the next occurrence. This can happen if set_source_file_properties is used
-            fileToRename = projectFileArgumentPosition(targetName, oldRelPathName);
-        } while (fileToRename);
+            fileToRename = projectFileArgumentPosition(targetName, fileToRename->relativeFileName);
+        } while (fileToRename && !fileToRename->fromGlobbing);
+
+        if (haveGlobbing && settings(project()).autorunCMake())
+            runCMake();
 
         return true;
     }
@@ -1218,6 +1240,12 @@ void CMakeBuildSystem::clearCMakeCache()
         path.removeRecursively();
 
     emit configurationCleared();
+}
+
+void CMakeBuildSystem::disableCMakeBuildMenuActions()
+{
+    emitParsingStarted();
+    emitParsingFinished(false);
 }
 
 void CMakeBuildSystem::combineScanAndParse(bool restoredFromBackup)
@@ -1467,6 +1495,11 @@ void CMakeBuildSystem::updateFallbackProjectData()
                                        Tr::tr("Scan \"%1\" project tree")
                                            .arg(project()->displayName()),
                                        "CMake.Scan.Tree");
+
+    // A failed configuration could be the result of an compiler update
+    // which then would cause CMake to fail. Make sure to offer an upgrade path
+    // to the new Kit compiler values.
+    updateInitialCMakeExpandableVars();
 }
 
 void CMakeBuildSystem::updateCMakeConfiguration(QString &errorMessage)
@@ -1977,6 +2010,9 @@ static FilePaths librarySearchPaths(const CMakeBuildSystem *bs, const QString &b
 
 const QList<BuildTargetInfo> CMakeBuildSystem::appTargets() const
 {
+    const CMakeConfig &cm = configurationFromCMake();
+    QString emulator = cm.stringValueOf("CMAKE_CROSSCOMPILING_EMULATOR");
+
     QList<BuildTargetInfo> appTargetList;
     const bool forAndroid = DeviceTypeKitAspect::deviceTypeId(kit())
                             == Android::Constants::ANDROID_DEVICE_TYPE;
@@ -1989,6 +2025,15 @@ const QList<BuildTargetInfo> CMakeBuildSystem::appTargets() const
 
             BuildTargetInfo bti;
             bti.displayName = ct.title;
+            if (ct.launchers.size() > 0)
+                bti.launchers = ct.launchers;
+            else if (!emulator.isEmpty()) {
+                // fallback for cmake < 3.29
+                QStringList args = emulator.split(";");
+                FilePath command = FilePath::fromString(args.takeFirst());
+                LauncherInfo launcherInfo = { "emulator", command, args };
+                bti.launchers.append(Launcher(launcherInfo, ct.sourceDirectory));
+            }
             bti.targetFilePath = ct.executable;
             bti.projectFilePath = ct.sourceDirectory.cleanPath();
             bti.workingDirectory = ct.workingDirectory;
@@ -2288,6 +2333,18 @@ void CMakeBuildSystem::updateInitialCMakeExpandableVars()
                 }
             }
         }
+    }
+
+    // Handle MSVC C/C++ compiler update, by udating also the linker, otherwise projects
+    // will fail to compile by using a linker that doesn't exist
+    const FilePath cxxCompiler = config.filePathValueOf("CMAKE_CXX_COMPILER");
+    if (!cxxCompiler.isEmpty() && cxxCompiler.fileName() == "cl.exe") {
+        const FilePath linker = cm.filePathValueOf("CMAKE_LINKER");
+        if (!linker.exists())
+            config << CMakeConfigItem(
+                "CMAKE_LINKER",
+                CMakeConfigItem::FILEPATH,
+                cxxCompiler.parentDir().pathAppended(linker.fileName()).path().toUtf8());
     }
 
     if (!config.isEmpty())

@@ -25,6 +25,8 @@
 #include <utils/stylehelper.h>
 #include <utils/utilsicons.h>
 
+using namespace Core;
+
 namespace QmlDesigner {
 
 NavigatorWidget::NavigatorWidget(NavigatorView *view)
@@ -67,6 +69,10 @@ NavigatorWidget::NavigatorWidget(NavigatorView *view)
     QmlDesignerPlugin::trackWidgetFocusTime(this, Constants::EVENT_NAVIGATORVIEW_TIME);
 
     setFocusProxy(m_treeView);
+
+    IContext::attach(this,
+                     Core::Context(Constants::C_QMLNAVIGATOR, Constants::C_QT_QUICK_TOOLS_MENU),
+                     [this](const IContext::HelpCallback &callback) { contextHelp(callback); });
 }
 
 void NavigatorWidget::setTreeModel(QAbstractItemModel *model)
@@ -180,10 +186,27 @@ QToolBar *NavigatorWidget::createToolBar()
 
 void NavigatorWidget::contextHelp(const Core::IContext::HelpCallback &callback) const
 {
-    if (auto view = navigatorView())
+    if (auto view = navigatorView()) {
+        QmlDesignerPlugin::emitUsageStatistics(Constants::EVENT_HELP_REQUESTED
+                                               + view->contextHelpId());
+#ifndef QDS_USE_PROJECTSTORAGE
+        ModelNode selectedNode = view->firstSelectedModelNode();
+        if (!selectedNode)
+            selectedNode = view->rootModelNode();
+
+        // TODO: Needs to be fixed for projectstorage.
+        const Core::HelpItem helpItem({QString::fromUtf8("QML." + selectedNode.type()),
+                                       "QML." + selectedNode.simplifiedTypeName()},
+                                      {},
+                                      {},
+                                      Core::HelpItem::QmlComponent);
+        callback(helpItem);
+#else
         QmlDesignerPlugin::contextHelp(callback, view->contextHelpId());
-    else
+#endif
+    } else {
         callback({});
+    }
 }
 
 void NavigatorWidget::disableNavigator()

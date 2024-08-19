@@ -15,6 +15,22 @@
 #include <unistd.h>
 #endif
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+#include <psapi.h>
+#endif
+
+#ifdef Q_OS_MACOS
+#include <sys/types.h>
+#include <sys/proc_info.h>
+#include <sys/sysctl.h>
+
+#include <chrono>
+#include <unistd.h>
+#include <libproc.h>
+#include <mach/mach_time.h>
+#endif
+
 using namespace Utils;
 
 namespace AppStatisticsMonitor::Internal {
@@ -175,35 +191,71 @@ class WindowsDataProvider : public IDataProvider
 public:
     WindowsDataProvider(qint64 pid, QObject *parent = nullptr)
         : IDataProvider(pid, parent)
-    {}
-
-    double getMemoryConsumption() { return 0; }
-
-    double getCpuConsumption() { return 0; }
-
-#if 0
-    double getMemoryConsumptionWindows(qint64 pid)
     {
-            HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
-        if (hProcess == NULL) {
-            std::cerr << "Failed to open process. Error code: " << GetLastError() << std::endl;
-            return 1;
-        }
+        MEMORYSTATUSEX memoryStatus;
+        memoryStatus.dwLength = sizeof(memoryStatus);
+        GlobalMemoryStatusEx(&memoryStatus);
 
-        PROCESS_MEMORY_COUNTERS_EX pmc;
-        if (!GetProcessMemoryInfo(hProcess, (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc))) {
-            std::cerr << "Failed to retrieve process memory information. Error code: " << GetLastError() << std::endl;
-            CloseHandle(hProcess);
-            return 1;
-        }
-
-        std::cout << "Process ID: " << pid << std::endl;
-        std::cout << "Memory consumption: " << pmc.PrivateUsage << " bytes" << std::endl;
-
-        CloseHandle(hProcess);
-        return pmc.PrivateUsage;
+        m_totalMemory = memoryStatus.ullTotalPhys;
     }
-#endif
+
+    double getMemoryConsumption()
+    {
+        HANDLE process = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, m_pid);
+
+        PROCESS_MEMORY_COUNTERS pmc;
+        SIZE_T memoryUsed = 0;
+        if (GetProcessMemoryInfo(process, &pmc, sizeof(pmc))) {
+            memoryUsed = pmc.WorkingSetSize;
+            // Can be used in the future for the process lifetime statistics
+            //double memoryUsedMB = static_cast<double>(memoryUsed) / (1024.0 * 1024.0);
+        }
+
+        CloseHandle(process);
+        return static_cast<double>(memoryUsed) / static_cast<double>(m_totalMemory) * 100.0;
+    }
+
+    double getCpuConsumption()
+    {
+        ULARGE_INTEGER sysKernel, sysUser, procKernel, procUser;
+        HANDLE process = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, m_pid);
+
+        FILETIME creationTime, exitTime, kernelTime, userTime;
+        GetProcessTimes(process, &creationTime, &exitTime, &kernelTime, &userTime);
+        procKernel.LowPart = kernelTime.dwLowDateTime;
+        procKernel.HighPart = kernelTime.dwHighDateTime;
+        procUser.LowPart = userTime.dwLowDateTime;
+        procUser.HighPart = userTime.dwHighDateTime;
+
+        SYSTEMTIME sysTime;
+        GetSystemTime(&sysTime);
+        SystemTimeToFileTime(&sysTime, &kernelTime);
+        SystemTimeToFileTime(&sysTime, &userTime);
+        sysKernel.LowPart = kernelTime.dwLowDateTime;
+        sysKernel.HighPart = kernelTime.dwHighDateTime;
+        sysUser.LowPart = userTime.dwLowDateTime;
+        sysUser.HighPart = userTime.dwHighDateTime;
+
+        const double sysElapsedTime = sysKernel.QuadPart + sysUser.QuadPart
+                                      - m_lastSysKernel.QuadPart - m_lastSysUser.QuadPart;
+        const double procElapsedTime = procKernel.QuadPart + procUser.QuadPart
+                                       - m_lastProcKernel.QuadPart - m_lastProcUser.QuadPart;
+        const double cpuUsagePercent = (procElapsedTime / sysElapsedTime) * 100.0;
+
+        m_lastProcKernel = procKernel;
+        m_lastProcUser = procUser;
+        m_lastSysKernel = sysKernel;
+        m_lastSysUser = sysUser;
+
+        CloseHandle(process);
+        return cpuUsagePercent;
+    }
+
+private:
+    ULARGE_INTEGER m_lastSysKernel = {{0, 0}}, m_lastSysUser = {{0, 0}},
+                   m_lastProcKernel = {{0, 0}}, m_lastProcUser = {{0, 0}};
+
+    DWORDLONG m_totalMemory = 0;
 };
 #endif
 
@@ -217,9 +269,63 @@ public:
         : IDataProvider(pid, parent)
     {}
 
-    double getMemoryConsumption() { return 0; }
+    double getCpuConsumption()
+    {
+        proc_taskallinfo taskAllInfo = {};
 
-    double getCpuConsumption() { return 0; }
+        const int result
+            = proc_pidinfo(m_pid, PROC_PIDTASKALLINFO, 0, &taskAllInfo, sizeof(taskAllInfo));
+        if (result == -1) {
+            return 0;
+        }
+
+        mach_timebase_info_data_t sTimebase;
+        mach_timebase_info(&sTimebase);
+        double timebase_to_ns = (double) sTimebase.numer / (double) sTimebase.denom;
+
+        const double currentTotalCpuTime = ((double) taskAllInfo.ptinfo.pti_total_user
+                                            + (double) taskAllInfo.ptinfo.pti_total_system)
+                                           * timebase_to_ns / 1e9;
+
+        const double cpuUsageDelta = currentTotalCpuTime - m_prevCpuUsage;
+
+        const auto elapsedTime = std::chrono::steady_clock::now() - m_prevTime;
+        const double elapsedTimeSeconds
+            = std::chrono::duration_cast<std::chrono::milliseconds>(elapsedTime).count() / 1000.0;
+
+        m_prevCpuUsage = currentTotalCpuTime;
+        m_prevTime = std::chrono::steady_clock::now();
+
+        return (cpuUsageDelta / elapsedTimeSeconds) * 100.0;
+    }
+
+    double getTotalPhysicalMemory()
+    {
+        int mib[2];
+        size_t length;
+        long long physicalMemory;
+
+        mib[0] = CTL_HW;
+        mib[1] = HW_MEMSIZE;
+        length = sizeof(physicalMemory);
+        sysctl(mib, 2, &physicalMemory, &length, NULL, 0);
+
+        return physicalMemory;
+    }
+
+    double getMemoryConsumption()
+    {
+        proc_taskinfo taskInfo;
+        int result = proc_pidinfo(m_pid, PROC_PIDTASKINFO, 0, &taskInfo, sizeof(taskInfo));
+        if (result == -1)
+            return 0;
+
+        return (taskInfo.pti_resident_size / getTotalPhysicalMemory()) * 100.0;
+    }
+
+private:
+    std::chrono::steady_clock::time_point m_prevTime = std::chrono::steady_clock::now();
+    double m_prevCpuUsage = 0;
 };
 #endif
 

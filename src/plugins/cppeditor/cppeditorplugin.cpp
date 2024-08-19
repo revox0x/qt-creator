@@ -11,6 +11,7 @@
 #include "cppeditortr.h"
 #include "cppeditorwidget.h"
 #include "cppfilesettingspage.h"
+#include "cpphighlighter.h"
 #include "cppincludehierarchy.h"
 #include "cppheadersource.h"
 #include "cppmodelmanager.h"
@@ -29,7 +30,6 @@
 #include "cppcodegen_test.h"
 #include "cppcompletion_test.h"
 #include "cppdoxygen_test.h"
-#include "cpphighlighter.h"
 #include "cppincludehierarchy_test.h"
 #include "cpplocalsymbols_test.h"
 #include "cpplocatorfilter_test.h"
@@ -154,12 +154,9 @@ class CppEditorPluginPrivate : public QObject
 public:
     void onTaskStarted(Utils::Id type);
     void onAllTasksFinished(Utils::Id type);
-    void inspectCppCodeModel();
 
     QAction *m_reparseExternallyChangedFiles = nullptr;
     QAction *m_findRefsCategorizedAction = nullptr;
-
-    QPointer<CppCodeModelInspectorDialog> m_cppCodeModelInspectorDialog;
 
     CppEditorFactory m_cppEditorFactory;
 
@@ -227,7 +224,7 @@ void CppEditorPlugin::initialize()
 void CppEditorPlugin::extensionsInitialized()
 {
     setupCppQuickFixProjectPanel();
-    setupCppFileSettings();
+    setupCppFileSettings(*this);
     setupCppCodeModelProjectSettingsPanel();
 
     if (CppModelManager::isClangCodeModelActive()) {
@@ -297,7 +294,7 @@ void CppEditorPlugin::setupMenus()
     inspectCppCodeModel.setText(Tr::tr("Inspect C++ Code Model..."));
     inspectCppCodeModel.setDefaultKeySequence(Tr::tr("Meta+Shift+F12"), Tr::tr("Ctrl+Shift+F12"));
     inspectCppCodeModel.addToContainer(Core::Constants::M_TOOLS_DEBUG);
-    inspectCppCodeModel.addOnTriggered(d, &CppEditorPluginPrivate::inspectCppCodeModel);
+    inspectCppCodeModel.addOnTriggered(d, &Internal::inspectCppCodeModel);
 }
 
 void CppEditorPlugin::addPerSymbolActions()
@@ -488,11 +485,11 @@ void CppEditorPlugin::registerVariables()
 
 void CppEditorPlugin::registerTests()
 {
+    registerHighlighterTests(*this);
 #ifdef WITH_TESTS
     addTest<CodegenTest>();
     addTest<CompilerOptionsBuilderTest>();
     addTest<CompletionTest>();
-    addTest<CppHighlighterTest>();
     addTest<FunctionUtilsTest>();
     addTest<HeaderPathFilterTest>();
     addTestCreator(createCppHeaderSourceTest);
@@ -532,17 +529,6 @@ void CppEditorPluginPrivate::onAllTasksFinished(Id type)
         ActionManager::command(TextEditor::Constants::FIND_USAGES)->action()->setEnabled(true);
         ActionManager::command(TextEditor::Constants::RENAME_SYMBOL)->action()->setEnabled(true);
         m_reparseExternallyChangedFiles->setEnabled(true);
-    }
-}
-
-void CppEditorPluginPrivate::inspectCppCodeModel()
-{
-    if (m_cppCodeModelInspectorDialog) {
-        ICore::raiseWindow(m_cppCodeModelInspectorDialog);
-    } else {
-        m_cppCodeModelInspectorDialog = new CppCodeModelInspectorDialog(ICore::dialogParent());
-        ICore::registerWindow(m_cppCodeModelInspectorDialog, Context("CppEditor.Inspector"));
-        m_cppCodeModelInspectorDialog->show();
     }
 }
 

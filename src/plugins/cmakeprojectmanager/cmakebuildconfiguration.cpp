@@ -34,7 +34,6 @@
 #include <projectexplorer/devicesupport/idevice.h>
 #include <projectexplorer/environmentaspectwidget.h>
 #include <projectexplorer/environmentwidget.h>
-#include <projectexplorer/gcctoolchain.h>
 #include <projectexplorer/kitaspects.h>
 #include <projectexplorer/namedwidget.h>
 #include <projectexplorer/processparameters.h>
@@ -159,6 +158,7 @@ private:
 
     QPushButton *m_batchEditButton = nullptr;
     QPushButton *m_kitConfiguration = nullptr;
+    CMakeConfig m_configurationChanges;
 };
 
 static QModelIndex mapToSource(const QAbstractItemView *view, const QModelIndex &idx)
@@ -201,11 +201,9 @@ CMakeBuildSettingsWidget::CMakeBuildSettingsWidget(CMakeBuildConfiguration *bc) 
 
     auto buildDirAspect = bc->buildDirectoryAspect();
     buildDirAspect->setAutoApplyOnEditingFinished(true);
-    connect(buildDirAspect, &BaseAspect::changed, this, [this] {
-        m_configModel->flush(); // clear out config cache...;
-    });
+    buildDirAspect->addOnChanged(this, [this] { m_configModel->flush(); }); // clear config cache
 
-    connect(&m_buildConfig->buildTypeAspect, &BaseAspect::changed, this, [this] {
+    m_buildConfig->buildTypeAspect.addOnChanged(this, [this] {
         if (!m_buildConfig->cmakeBuildSystem()->isMultiConfig()) {
             CMakeConfig config;
             config << CMakeConfigItem("CMAKE_BUILD_TYPE",
@@ -216,9 +214,7 @@ CMakeBuildSettingsWidget::CMakeBuildSettingsWidget(CMakeBuildConfiguration *bc) 
     });
 
     auto qmlDebugAspect = bc->aspect<QtSupport::QmlDebuggingAspect>();
-    connect(qmlDebugAspect, &QtSupport::QmlDebuggingAspect::changed, this, [this] {
-        updateButtonState();
-    });
+    qmlDebugAspect->addOnChanged(this, [this] { updateButtonState(); });
 
     m_warningMessageLabel = new InfoLabel({}, InfoLabel::Warning);
     m_warningMessageLabel->setVisible(false);
@@ -417,6 +413,11 @@ CMakeBuildSettingsWidget::CMakeBuildSettingsWidget(CMakeBuildConfiguration *bc) 
         updateButtonState();
         m_showProgressTimer.stop();
         m_progressIndicator->hide();
+
+        if (!m_configurationChanges.isEmpty()) {
+            m_configModel->setBatchEditConfiguration(m_configurationChanges);
+            m_configurationChanges.clear();
+        }
         updateConfigurationStateSelection();
     });
 
@@ -503,8 +504,9 @@ CMakeBuildSettingsWidget::CMakeBuildSettingsWidget(CMakeBuildConfiguration *bc) 
     connect(bs, &CMakeBuildSystem::warningOccurred,
             this, &CMakeBuildSettingsWidget::setWarning);
 
-    connect(bs, &CMakeBuildSystem::configurationChanged,
-            m_configModel, &ConfigModel::setBatchEditConfiguration);
+    connect(bs, &CMakeBuildSystem::configurationChanged, this, [this](const CMakeConfig &config) {
+        m_configurationChanges = config;
+    });
 
     updateFromKit();
     connect(m_buildConfig->target(), &Target::kitChanged,
@@ -615,9 +617,9 @@ void CMakeBuildSettingsWidget::reconfigureWithInitialParameters()
     if (reply != QMessageBox::Yes)
         return;
 
-    m_buildConfig->cmakeBuildSystem()->clearCMakeCache();
-
     updateInitialCMakeArguments();
+
+    m_buildConfig->cmakeBuildSystem()->clearCMakeCache();
 
     if (ProjectExplorerPlugin::saveModifiedFiles())
         m_buildConfig->cmakeBuildSystem()->runCMake();
@@ -698,27 +700,19 @@ void CMakeBuildSettingsWidget::kitCMakeConfiguration()
         m_buildConfig->kit()->unblockNotification();
     });
 
-    Layouting::Grid grid;
-    KitAspect *widget = CMakeKitAspect::createKitAspect(m_buildConfig->kit());
-    widget->setParent(dialog);
-    widget->addToLayout(grid);
-    widget = CMakeGeneratorKitAspect::createKitAspect(m_buildConfig->kit());
-    widget->setParent(dialog);
-    widget->addToLayout(grid);
-    widget = CMakeConfigurationKitAspect::createKitAspect(m_buildConfig->kit());
-    widget->setParent(dialog);
-    widget->addToLayout(grid);
-    grid.attachTo(dialog);
-
-    auto layout = qobject_cast<QGridLayout *>(dialog->layout());
-
-    layout->setColumnStretch(1, 1);
+    Kit *kit = m_buildConfig->kit();
 
     auto buttons = new QDialogButtonBox(QDialogButtonBox::Close);
     connect(buttons, &QDialogButtonBox::clicked, dialog, &QDialog::close);
-    layout->addItem(new QSpacerItem(0, 0, QSizePolicy::Maximum, QSizePolicy::MinimumExpanding),
-                    4, 0);
-    layout->addWidget(buttons, 5, 0, 1, -1);
+
+    using namespace Layouting;
+    Grid {
+        CMakeKitAspect::createKitAspect(kit),
+        CMakeGeneratorKitAspect::createKitAspect(kit),
+        CMakeConfigurationKitAspect::createKitAspect(kit),
+        empty, empty, buttons,
+        columnStretch(1, 1)
+    }.attachTo(dialog);
 
     dialog->setMinimumWidth(400);
     dialog->resize(800, 1);
@@ -1184,30 +1178,6 @@ static CommandLine defaultInitialCMakeCommand(
         }
     }
 
-    // GCC compiler and linker specific flags
-    for (Toolchain *tc : ToolchainKitAspect::toolChains(k)) {
-        if (auto *gccTc = tc->asGccToolchain()) {
-            const QStringList compilerFlags = gccTc->platformCodeGenFlags();
-
-            QLatin1String languageFlagsInit;
-            if (gccTc->language() == ProjectExplorer::Constants::C_LANGUAGE_ID)
-                languageFlagsInit = QLatin1String(CMAKE_C_FLAGS_INIT);
-            else if (gccTc->language() == ProjectExplorer::Constants::CXX_LANGUAGE_ID)
-                languageFlagsInit = QLatin1String(CMAKE_CXX_FLAGS_INIT);
-
-            if (!languageFlagsInit.isEmpty() && !compilerFlags.isEmpty())
-                cmd.addArg("-D" + languageFlagsInit + ":STRING=" + compilerFlags.join(" "));
-
-            const QStringList linkerFlags = gccTc->platformLinkerFlags();
-            if (!linkerFlags.isEmpty()) {
-                const QString joinedLinkerFlags = linkerFlags.join(" ");
-                cmd.addArg("-DCMAKE_EXE_LINKER_FLAGS_INIT:STRING=" + joinedLinkerFlags);
-                cmd.addArg("-DCMAKE_MODULE_LINKER_FLAGS_INIT:STRING=" + joinedLinkerFlags);
-                cmd.addArg("-DCMAKE_SHARED_LINKER_FLAGS_INIT:STRING=" + joinedLinkerFlags);
-            }
-        }
-    }
-
     cmd.addArgs(CMakeConfigurationKitAspect::toArgumentsList(k));
     cmd.addArgs(CMakeConfigurationKitAspect::additionalConfiguration(k), CommandLine::Raw);
 
@@ -1356,7 +1326,7 @@ static void addCMakeConfigurePresetToInitialArguments(QStringList &initialArgume
 
                 if (argFilePath != presetFilePath)
                     arg = presetItem.toArgument();
-            } else if (argItem.key == CMAKE_CXX_FLAGS_INIT) {
+            } else if (argItem.key == CMAKE_C_FLAGS_INIT || argItem.key == CMAKE_CXX_FLAGS_INIT) {
                 // Append the preset value with at the initial parameters value (e.g. QML Debugging)
                 if (argItem.expandedValue(k) != QString::fromUtf8(presetItem.value)) {
                     argItem.value.append(" ");
@@ -1463,12 +1433,9 @@ CMakeBuildConfiguration::CMakeBuildConfiguration(Target *target, Id id)
     buildTypeAspect.setDisplayStyle(StringAspect::LineEditDisplay);
     buildTypeAspect.setDefaultValue("Unknown");
 
-    initialCMakeArguments.setMacroExpanderProvider([this] { return macroExpander(); });
-
     additionalCMakeOptions.setSettingsKey("CMake.Additional.Options");
     additionalCMakeOptions.setLabelText(Tr::tr("Additional CMake <a href=\"options\">options</a>:"));
     additionalCMakeOptions.setDisplayStyle(StringAspect::LineEditDisplay);
-    additionalCMakeOptions.setMacroExpanderProvider([this] { return macroExpander(); });
 
     macroExpander()->registerVariable(DEVELOPMENT_TEAM_FLAG,
                                       Tr::tr("The CMake flag for the development team"),
@@ -1488,20 +1455,11 @@ CMakeBuildConfiguration::CMakeBuildConfiguration(Target *target, Id id)
                                           return QString();
                                       });
 
-    macroExpander()->registerVariable(CMAKE_OSX_ARCHITECTURES_FLAG,
-                                      Tr::tr("The CMake flag for the architecture on macOS"),
-                                      [target] {
-                                          if (HostOsInfo::isRunningUnderRosetta()) {
-                                              if (auto *qt = QtSupport::QtKitAspect::qtVersion(target->kit())) {
-                                                  const Abis abis = qt->qtAbis();
-                                                  for (const Abi &abi : abis) {
-                                                      if (abi.architecture() == Abi::ArmArchitecture)
-                                                          return QLatin1String("-DCMAKE_OSX_ARCHITECTURES=arm64");
-                                                  }
-                                              }
-                                          }
-                                          return QLatin1String();
-                                      });
+    macroExpander()->registerVariable(
+        CMAKE_OSX_ARCHITECTURES_FLAG, Tr::tr("The CMake flag for the architecture on macOS"), [] {
+            // TODO deprecated since Qt Creator 15, remove later
+            return QString();
+        });
     macroExpander()->registerVariable(QT_QML_DEBUG_FLAG,
                                       Tr::tr("The CMake flag for QML debugging, if enabled"),
                                       [this] {
@@ -1588,21 +1546,14 @@ CMakeBuildConfiguration::CMakeBuildConfiguration(Target *target, Id id)
                 // and sysroot in the CMake configuration, but that currently doesn't work with Qt/CMake
                 // https://gitlab.kitware.com/cmake/cmake/-/issues/21276
                 const Id deviceType = DeviceTypeKitAspect::deviceTypeId(k);
-                // TODO the architectures are probably not correct with Apple Silicon in the mix...
-                const QString architecture = deviceType == Ios::Constants::IOS_DEVICE_TYPE
-                                                 ? QLatin1String("arm64")
-                                                 : QLatin1String("x86_64");
                 const QString sysroot = deviceType == Ios::Constants::IOS_DEVICE_TYPE
                                             ? QLatin1String("iphoneos")
                                             : QLatin1String("iphonesimulator");
                 cmd.addArg(CMAKE_QT6_TOOLCHAIN_FILE_ARG);
-                cmd.addArg("-DCMAKE_OSX_ARCHITECTURES:STRING=" + architecture);
                 cmd.addArg("-DCMAKE_OSX_SYSROOT:STRING=" + sysroot);
                 cmd.addArg("%{" + QLatin1String(DEVELOPMENT_TEAM_FLAG) + "}");
                 cmd.addArg("%{" + QLatin1String(PROVISIONING_PROFILE_FLAG) + "}");
             }
-        } else if (device && device->osType() == Utils::OsTypeMac) {
-            cmd.addArg("%{" + QLatin1String(CMAKE_OSX_ARCHITECTURES_FLAG) + "}");
         }
 
         if (isWebAssembly(k) || isQnx(k) || isWindowsARM64(k)) {
@@ -1613,7 +1564,7 @@ CMakeBuildConfiguration::CMakeBuildConfiguration(Target *target, Id id)
         if (info.buildDirectory.isEmpty()) {
             setBuildDirectory(shadowBuildDirectory(target->project()->projectFilePath(),
                                                    k,
-                                                   info.typeName,
+                                                   info.displayName,
                                                    info.buildType));
         }
 
@@ -1988,6 +1939,9 @@ CMakeBuildConfigurationFactory::CMakeBuildConfigurationFactory()
                                 k,
                                 info.typeName,
                                 info.buildType);
+            } else {
+                info.displayName.clear(); // ask for a name
+                info.buildDirectory.clear(); // This depends on the displayName
             }
             result << info;
         }

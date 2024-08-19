@@ -3,10 +3,13 @@
 
 #include "appoutputpane.h"
 
+#include "project.h"
 #include "projectexplorer.h"
 #include "projectexplorerconstants.h"
 #include "projectexplorericons.h"
+#include "projectexplorersettings.h"
 #include "projectexplorertr.h"
+#include "projectmanager.h"
 #include "runcontrol.h"
 #include "showoutputtaskhandler.h"
 #include "windebuginterface.h"
@@ -76,15 +79,11 @@ static QString msgAttachDebuggerTooltip(const QString &handleDescription = QStri
 
 class TabWidget : public QTabWidget
 {
-    Q_OBJECT
 public:
     TabWidget(QWidget *parent = nullptr);
-signals:
-    void contextMenuRequested(const QPoint &pos, int index);
-protected:
-    bool eventFilter(QObject *object, QEvent *event) override;
+
 private:
-    void slotContextMenuRequested(const QPoint &pos);
+    bool eventFilter(QObject *object, QEvent *event) override;
     int m_tabIndexForMiddleClick = -1;
 };
 
@@ -93,8 +92,6 @@ TabWidget::TabWidget(QWidget *parent)
 {
     tabBar()->installEventFilter(this);
     setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(this, &QWidget::customContextMenuRequested,
-            this, &TabWidget::slotContextMenuRequested);
 }
 
 bool TabWidget::eventFilter(QObject *object, QEvent *event)
@@ -120,11 +117,6 @@ bool TabWidget::eventFilter(QObject *object, QEvent *event)
         }
     }
     return QTabWidget::eventFilter(object, event);
-}
-
-void TabWidget::slotContextMenuRequested(const QPoint &pos)
-{
-    emit contextMenuRequested(pos, tabBar()->tabAt(pos));
 }
 
 AppOutputPane::RunControlTab::RunControlTab(RunControl *runControl, Core::OutputWindow *w) :
@@ -213,11 +205,13 @@ AppOutputPane::AppOutputPane() :
 
     connect(m_tabWidget, &QTabWidget::currentChanged,
             this, &AppOutputPane::tabChanged);
-    connect(m_tabWidget, &TabWidget::contextMenuRequested,
+    connect(m_tabWidget, &QWidget::customContextMenuRequested,
             this, &AppOutputPane::contextMenuRequested);
 
     connect(SessionManager::instance(), &SessionManager::aboutToUnloadSession,
             this, &AppOutputPane::aboutToUnloadSession);
+    connect(ProjectManager::instance(), &ProjectManager::projectRemoved,
+            this, &AppOutputPane::projectRemoved);
 
     setupFilterUi("AppOutputPane.Filter");
     setFilteringEnabled(false);
@@ -339,7 +333,8 @@ void AppOutputPane::updateFilter()
 {
     if (RunControlTab * const tab = currentTab()) {
         tab->window->updateFilterProperties(filterText(), filterCaseSensitivity(),
-                                            filterUsesRegexp(), filterIsInverted());
+                                            filterUsesRegexp(), filterIsInverted(),
+                                            beforeContext(), afterContext());
     }
 }
 
@@ -399,6 +394,11 @@ void AppOutputPane::createNewOutputWindow(RunControl *rc)
                    && thisWorkingDirectory == tab.runControl->workingDirectory()
                    && thisEnvironment == tab.runControl->environment();
         });
+    const auto updateOutputFileName = [this](int index, RunControl *rc) {
+        qobject_cast<OutputWindow *>(m_tabWidget->widget(index))
+            //: file name suggested for saving application output, %1 = run configuration display name
+            ->setOutputFileNameHint(Tr::tr("application-output-%1.txt").arg(rc->displayName()));
+    };
     if (tab != m_runControlTabs.end()) {
         // Reuse this tab
         if (tab->runControl)
@@ -414,6 +414,7 @@ void AppOutputPane::createNewOutputWindow(RunControl *rc)
         const int tabIndex = m_tabWidget->indexOf(tab->window);
         QTC_ASSERT(tabIndex != -1, return);
         m_tabWidget->setTabText(tabIndex, rc->displayName());
+        updateOutputFileName(tabIndex, rc);
 
         tab->window->scrollToBottom();
         qCDebug(appOutputLog) << "AppOutputPane::createNewOutputWindow: Reusing tab"
@@ -429,8 +430,6 @@ void AppOutputPane::createNewOutputWindow(RunControl *rc)
     ow->setWindowIcon(Icons::WINDOW.icon());
     ow->setWordWrapEnabled(m_settings.wrapOutput);
     ow->setMaxCharCount(m_settings.maxCharCount);
-    //: file name suggested for saving application output, %1 = run configuration display name
-    ow->setOutputFileNameHint(Tr::tr("application-output-%1.txt").arg(rc->displayName()));
 
     auto updateFontSettings = [ow] {
         ow->setBaseFont(TextEditor::TextEditorSettings::fontSettings().font());
@@ -456,6 +455,7 @@ void AppOutputPane::createNewOutputWindow(RunControl *rc)
 
     m_runControlTabs.push_back(RunControlTab(rc, ow));
     m_tabWidget->addTab(ow, rc->displayName());
+    updateOutputFileName(m_tabWidget->count() - 1, rc);
     qCDebug(appOutputLog) << "AppOutputPane::createNewOutputWindow: Adding tab for" << rc;
     updateCloseActions();
     setFilteringEnabled(m_tabWidget->count() > 0);
@@ -511,6 +511,31 @@ void AppOutputPane::setSettings(const AppOutputSettings &settings)
     m_settings = settings;
     storeSettings();
     updateFromSettings();
+}
+
+void AppOutputPane::prepareRunControlStart(RunControl *runControl)
+{
+    createNewOutputWindow(runControl);
+    flash(); // one flash for starting
+    showTabFor(runControl);
+    Id runMode = runControl->runMode();
+    const auto popupMode = runMode == Constants::NORMAL_RUN_MODE
+            ? settings().runOutputMode
+            : runMode == Constants::DEBUG_RUN_MODE
+                ? settings().debugOutputMode
+                : AppOutputPaneMode::FlashOnOutput;
+    setBehaviorOnOutput(runControl, popupMode);
+}
+
+void AppOutputPane::showOutputPaneForRunControl(RunControl *runControl)
+{
+    showTabFor(runControl);
+    popup(IOutputPane::NoModeSwitch | IOutputPane::WithFocus);
+}
+
+void AppOutputPane::closeTabsWithoutPrompt()
+{
+    closeTabs(CloseTabNoPrompt);
 }
 
 const AppOutputPaneMode kRunOutputModeDefault = AppOutputPaneMode::PopupOnFirstOutput;
@@ -730,15 +755,17 @@ void AppOutputPane::tabChanged(int i)
     RunControlTab * const controlTab = tabFor(m_tabWidget->widget(i));
     if (i != -1 && controlTab) {
         controlTab->window->updateFilterProperties(filterText(), filterCaseSensitivity(),
-                                                   filterUsesRegexp(), filterIsInverted());
+                                                   filterUsesRegexp(), filterIsInverted(),
+                                                   beforeContext(), afterContext());
         enableButtons(controlTab->runControl);
     } else {
         enableDefaultButtons();
     }
 }
 
-void AppOutputPane::contextMenuRequested(const QPoint &pos, int index)
+void AppOutputPane::contextMenuRequested(const QPoint &pos)
 {
+    const int index = m_tabWidget->tabBar()->tabAt(pos);
     const QList<QAction *> actions = {m_closeCurrentTabAction, m_closeAllTabsAction, m_closeOtherTabsAction};
     QAction *action = QMenu::exec(actions, m_tabWidget->mapToGlobal(pos), nullptr, m_tabWidget);
     if (action == m_closeAllTabsAction) {
@@ -810,12 +837,17 @@ bool AppOutputPane::canNavigate() const
     return false;
 }
 
+bool AppOutputPane::hasFilterContext() const
+{
+    return true;
+}
+
 class AppOutputSettingsWidget : public Core::IOptionsPageWidget
 {
 public:
     AppOutputSettingsWidget()
     {
-        const AppOutputSettings &settings = ProjectExplorerPlugin::appOutputSettings();
+        const AppOutputSettings &settings = appOutputPane().settings();
         m_wrapOutputCheckBox.setText(Tr::tr("Word-wrap output"));
         m_wrapOutputCheckBox.setChecked(settings.wrapOutput);
         m_cleanOldOutputCheckBox.setText(Tr::tr("Clear old output on a new run"));
@@ -867,7 +899,7 @@ public:
                     m_debugOutputModeComboBox.currentData().toInt());
         s.maxCharCount = m_maxCharsBox.value();
 
-        ProjectExplorerPlugin::setAppOutputSettings(s);
+        appOutputPane().setSettings(s);
     }
 
 private:
@@ -887,8 +919,25 @@ AppOutputSettingsPage::AppOutputSettingsPage()
     setWidgetCreator([] { return new AppOutputSettingsWidget; });
 }
 
+static QPointer<AppOutputPane> theAppOutputPane;
+
+AppOutputPane &appOutputPane()
+{
+    QTC_CHECK(!theAppOutputPane.isNull());
+    return *theAppOutputPane;
+}
+
+void setupAppOutputPane()
+{
+    QTC_CHECK(theAppOutputPane.isNull());
+    theAppOutputPane = new AppOutputPane;
+}
+
+void destroyAppOutputPane()
+{
+    QTC_CHECK(!theAppOutputPane.isNull());
+    delete theAppOutputPane;
+}
+
 } // namespace Internal
 } // namespace ProjectExplorer
-
-#include "appoutputpane.moc"
-

@@ -99,6 +99,7 @@ public:
     static Qt::CaseSensitivity readFileSystemSensitivity(Utils::QtcSettings *settings);
     static void writeFileSystemSensitivity(Utils::QtcSettings *settings,
                                            Qt::CaseSensitivity sensitivity);
+    static Utils::FilePaths openFilesForState(const QByteArray &state, int max);
 
     static EditorWindow *createEditorWindow();
     static void addEditorArea(EditorArea *area);
@@ -220,6 +221,8 @@ private:
     QAction *m_gotoPreviousDocHistoryAction = nullptr;
     QAction *m_goBackAction = nullptr;
     QAction *m_goForwardAction = nullptr;
+    QAction *m_nextDocAction = nullptr;
+    QAction *m_prevDocAction = nullptr;
     QAction *m_reopenLastClosedDocumenAction = nullptr;
     QAction *m_gotoLastEditAction = nullptr;
     QAction *m_splitAction = nullptr;
@@ -250,7 +253,8 @@ private:
     QAction *m_filePropertiesAction = nullptr;
     QAction *m_pinAction = nullptr;
     DocumentModel::Entry *m_contextMenuEntry = nullptr;
-    IEditor *m_contextMenuEditor = nullptr;
+    QPointer<IDocument> m_contextMenuDocument;
+    QPointer<IEditor> m_contextMenuEditor;
 
     OpenEditorsWindow *m_windowPopup = nullptr;
 

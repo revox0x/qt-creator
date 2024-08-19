@@ -54,6 +54,7 @@ QtcLibrary {
         "benchmarker.h",
         "buildablehelperlibrary.cpp",
         "buildablehelperlibrary.h",
+        "builderutils.h",
         "camelcasecursor.cpp",
         "camelcasecursor.h",
         "categorysortfiltermodel.cpp",
@@ -148,6 +149,7 @@ QtcLibrary {
         "globalfilechangeblocker.h",
         "guard.cpp",
         "guard.h",
+        "guardedcallback.h",
         "guiutils.cpp",
         "guiutils.h",
         "highlightingitemdelegate.cpp",
@@ -375,8 +377,6 @@ QtcLibrary {
             "fsengine.h",
             "fsenginehandler.cpp",
             "fsenginehandler.h",
-            "fsengine_impl.cpp",
-            "fsengine_impl.h"
         ]
     }
 
@@ -475,6 +475,6 @@ QtcLibrary {
     Export {
         Depends { name: "Qt"; submodules: ["concurrent", "widgets" ] }
         Depends { name: "Tasking" }
-        cpp.includePaths: "mimetypes2"
+        cpp.includePaths: exportingProduct.sourceDirectory + "/mimetypes2"
     }
 }

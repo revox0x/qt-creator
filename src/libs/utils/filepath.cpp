@@ -293,6 +293,41 @@ QString FilePath::toString() const
     return scheme() + "://" + encodedHost() + pathView();
 }
 
+bool FilePath::equals(const FilePath &first, const FilePath &second, Qt::CaseSensitivity cs)
+{
+    if (first.m_hash != 0 && second.m_hash != 0 && first.m_hash != second.m_hash)
+        return false;
+
+    return first.pathView().compare(second.pathView(), cs) == 0
+           && first.host() == second.host()
+           && first.scheme() == second.scheme();
+}
+
+/*!
+ * Returns \c true if this file path compares equal to \a other case-sensitively.
+ * This is relevant on semi-case sensitive systems like Windows with NTFS.
+ * \sa {https://bugreports.qt.io/browse/QTCREATORBUG-30846}{QTCREATORBUG-30846}
+ */
+bool FilePath::equalsCaseSensitive(const FilePath &other) const
+{
+    return equals(*this, other, Qt::CaseSensitive);
+}
+
+/*!
+    Returns a FilePathWatcher for this path.
+
+    The returned FilePathWatcher emits its signal when the file at this path
+    is modified, renamed, or deleted. The signal is emitted in the calling thread.
+    If called from a non-main thread, it might take a while until the signal
+    starts to be emitted.
+
+    \sa FilePathWatcher
+*/
+Utils::expected_str<std::unique_ptr<FilePathWatcher>> FilePath::watch() const
+{
+    return fileAccess()->watch(*this);
+}
+
 /*!
     Returns a QString for passing on to QString based APIs.
 
@@ -2121,6 +2156,12 @@ FilePath FilePath::operator/(const QString &str) const
     return pathAppended(str);
 }
 
+FilePath &FilePath::operator/=(const QString &str)
+{
+    *this = pathAppended(str);
+    return *this;
+}
+
 /*!
     \brief Clears all parts of the FilePath.
 */
@@ -2354,12 +2395,7 @@ DeviceFileHooks &DeviceFileHooks::instance()
 
 QTCREATOR_UTILS_EXPORT bool operator==(const FilePath &first, const FilePath &second)
 {
-    if (first.m_hash != 0 && second.m_hash != 0 && first.m_hash != second.m_hash)
-        return false;
-
-    return first.pathView().compare(second.pathView(), first.caseSensitivity()) == 0
-        && first.host() == second.host()
-        && first.scheme() == second.scheme();
+    return FilePath::equals(first, second, first.caseSensitivity());
 }
 
 QTCREATOR_UTILS_EXPORT bool operator!=(const FilePath &first, const FilePath &second)

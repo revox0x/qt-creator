@@ -9,6 +9,7 @@
 
 #include <designermcumanager.h>
 #include <documentmanager.h>
+#include <import.h>
 #include <modelnodeoperations.h>
 #include <qmlchangeset.h>
 #include <qmldesignerconstants.h>
@@ -16,20 +17,9 @@
 
 #include <coreplugin/icore.h>
 
+#include <QTimer>
+
 namespace EffectComposer {
-
-EffectComposerContext::EffectComposerContext(QWidget *widget)
-    : IContext(widget)
-{
-    setWidget(widget);
-    setContext(Core::Context(QmlDesigner::Constants::C_QMLEFFECTCOMPOSER,
-                             QmlDesigner::Constants::C_QT_QUICK_TOOLS_MENU));
-}
-
-void EffectComposerContext::contextHelp(const HelpCallback &callback) const
-{
-    qobject_cast<EffectComposerWidget *>(m_widget)->contextHelp(callback);
-}
 
 EffectComposerView::EffectComposerView(QmlDesigner::ExternalDependenciesInterface &externalDependencies)
     : AbstractView{externalDependencies}
@@ -117,13 +107,12 @@ QmlDesigner::WidgetInfo EffectComposerView::widgetInfo()
                     document->clearUndoRedoStacks();
             }
         });
-
-        auto context = new EffectComposerContext(m_widget.data());
-        Core::ICore::addContextObject(context);
     }
 
-    return createWidgetInfo(m_widget.data(), "EffectComposer",
-                            QmlDesigner::WidgetInfo::LeftPane, 0, tr("Effect Composer [beta]"));
+    return createWidgetInfo(m_widget.data(),
+                            "EffectComposer",
+                            QmlDesigner::WidgetInfo::LeftPane,
+                            tr("Effect Composer [beta]"));
 }
 
 void EffectComposerView::customNotification([[maybe_unused]] const AbstractView *view,
@@ -181,6 +170,50 @@ void EffectComposerView::selectedNodesChanged(const QList<QmlDesigner::ModelNode
     }
 
     m_widget->effectComposerModel()->setHasValidTarget(hasValidTarget);
+}
+
+void EffectComposerView::nodeAboutToBeRemoved(const QmlDesigner::ModelNode &removedNode)
+{
+    QList<QmlDesigner::ModelNode> nodes = removedNode.allSubModelNodesAndThisNode();
+    bool effectRemoved = false;
+    for (const QmlDesigner::ModelNode &node : nodes) {
+        QmlDesigner::QmlItemNode qmlNode(node);
+        if (qmlNode.isEffectItem()) {
+            effectRemoved = true;
+            break;
+        }
+    }
+    if (effectRemoved)
+        QTimer::singleShot(0, this, &EffectComposerView::removeUnusedEffectImports);
+}
+
+void EffectComposerView::removeUnusedEffectImports()
+{
+    QTC_ASSERT(model(), return);
+
+    const QString effectPrefix = m_componentUtils.composedEffectsTypePrefix();
+
+    const QmlDesigner::Imports &imports = model()->imports();
+    QHash<QString, QmlDesigner::Import> effectImports;
+    for (const QmlDesigner::Import &import : imports) {
+        if (import.url().startsWith(effectPrefix)) {
+            QString type = import.url().split('.').last();
+            effectImports.insert(type, import);
+        }
+    }
+
+    const QList<QmlDesigner::ModelNode> allNodes = allModelNodes();
+    for (const QmlDesigner::ModelNode &node : allNodes) {
+        if (QmlDesigner::QmlItemNode(node).isEffectItem())
+            effectImports.remove(node.simplifiedTypeName());
+    }
+
+    if (!effectImports.isEmpty()) {
+        QmlDesigner::Imports removeImports;
+        for (const QmlDesigner::Import &import : effectImports)
+            removeImports.append(import);
+        model()->changeImports({}, removeImports);
+    }
 }
 
 } // namespace EffectComposer

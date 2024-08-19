@@ -936,6 +936,20 @@ const Node *Project::nodeForFilePath(const FilePath &filePath,
     return nullptr;
 }
 
+ProjectNode *Project::productNodeForFilePath(
+    const Utils::FilePath &filePath, const NodeMatcher &extraMatcher) const
+{
+    const Node * const fileNode = nodeForFilePath(filePath, extraMatcher);
+    if (!fileNode)
+        return nullptr;
+    for (ProjectNode *projectNode = fileNode->parentProjectNode(); projectNode;
+         projectNode = projectNode->parentProjectNode()) {
+        if (projectNode->isProduct())
+            return projectNode;
+    }
+    return nullptr;
+}
+
 FilePaths Project::binariesForSourceFile(const FilePath &sourceFile) const
 {
     if (!rootProjectNode())
@@ -1374,7 +1388,7 @@ const QString TEST_PROJECT_MIMETYPE = "application/vnd.test.qmakeprofile";
 const QString TEST_PROJECT_DISPLAYNAME = "testProjectFoo";
 const char TEST_PROJECT_ID[] = "Test.Project.Id";
 
-class TestBuildSystem : public BuildSystem
+class TestBuildSystem final : public BuildSystem
 {
 public:
     using BuildSystem::BuildSystem;
@@ -1390,7 +1404,7 @@ public:
     {
         setId(TEST_PROJECT_ID);
         setDisplayName(TEST_PROJECT_DISPLAYNAME);
-        setBuildSystemCreator([](Target *t) { return new TestBuildSystem(t); });
+        setBuildSystemCreator<TestBuildSystem>();
         setNeedsBuildConfigurations(false);
         setNeedsDeployConfigurations(false);
 

@@ -36,13 +36,14 @@ class PluginView;
 
 struct EXTENSIONSYSTEM_EXPORT PluginDependency
 {
-    enum Type {
-        Required,
-        Optional,
-        Test
-    };
+    enum Type { Required, Optional, Test };
 
     PluginDependency() : type(Required) {}
+    PluginDependency(const QString &name, const QString &version, Type type = Required)
+        : name(name)
+        , version(version)
+        , type(type)
+    {}
 
     QString name;
     QString version;
@@ -103,6 +104,7 @@ public:
     virtual QString description() const;
     virtual QString longDescription() const;
     virtual QString url() const;
+    virtual QString documentationUrl() const;
     virtual QString category() const;
     virtual QString revision() const;
     virtual QRegularExpression platformSpecification() const;
@@ -130,7 +132,7 @@ public:
     virtual void addArgument(const QString &argument);
     virtual QHash<PluginDependency, PluginSpec *> dependencySpecs() const;
 
-    virtual bool provides(const QString &pluginName, const QString &pluginVersion) const;
+    virtual bool provides(PluginSpec *spec, const PluginDependency &dependency) const;
     virtual bool requiresAny(const QSet<PluginSpec *> &plugins) const;
     virtual PluginSpecs enableDependenciesIndirectly(bool enableTestDependencies);
     virtual bool resolveDependencies(const PluginSpecs &pluginSpecs);
@@ -144,6 +146,8 @@ public:
     static int versionCompare(const QString &version1, const QString &version2);
 
     virtual void setEnabledBySettings(bool value);
+
+    virtual Utils::FilePath installLocation(bool inUserFolder) const = 0;
 
 protected:
     virtual void setEnabledByDefault(bool value);
@@ -172,6 +176,10 @@ private:
     std::unique_ptr<Internal::PluginSpecPrivate> d;
 };
 
+using PluginFromArchiveFactory = std::function<QList<PluginSpec *>(const Utils::FilePath &path)>;
+EXTENSIONSYSTEM_EXPORT QList<PluginFromArchiveFactory> &pluginSpecsFromArchiveFactories();
+EXTENSIONSYSTEM_EXPORT QList<PluginSpec *> pluginSpecsFromArchive(const Utils::FilePath &path);
+
 EXTENSIONSYSTEM_EXPORT Utils::expected_str<PluginSpec *> readCppPluginSpec(
     const Utils::FilePath &filePath);
 EXTENSIONSYSTEM_EXPORT Utils::expected_str<PluginSpec *> readCppPluginSpec(
@@ -198,6 +206,8 @@ public:
     void kill() override;
 
     Utils::expected_str<void> readMetaData(const QJsonObject &pluginMetaData) override;
+
+    Utils::FilePath installLocation(bool inUserFolder) const override;
 
 protected:
     CppPluginSpec();

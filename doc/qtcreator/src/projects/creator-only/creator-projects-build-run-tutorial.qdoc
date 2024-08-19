@@ -14,7 +14,8 @@
 
     \ingroup creator-tutorials
 
-    \title Building and Running an Example
+    \keyword {Building and Running an Example}
+    \title Tutorial: Build and run
 
     \brief How to build and run a Qt example.
 
@@ -51,7 +52,7 @@
             (4) to list examples that you can run on \B2Q devices.
 
         \li In \uicontrol {Configure Project}, select
-            \l{glossary-buildandrun-kit}{kits} for building the example for the
+            \l{Kits}{kits} for building the example for the
             target platforms.
 
             \image qtcreator-configure-project.webp {Configure Project view}

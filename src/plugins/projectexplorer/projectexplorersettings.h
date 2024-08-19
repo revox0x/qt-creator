@@ -22,6 +22,7 @@ class ProjectExplorerSettings
 {
 public:
     BuildBeforeRunMode buildBeforeDeploy = BuildBeforeRunMode::WholeProject;
+    int reaperTimeoutInSeconds = 1;
     bool deployBeforeRun = true;
     bool saveBeforeBuild = false;
     bool useJom = true;
@@ -53,19 +54,6 @@ namespace Internal {
 
 void setPromptToStopSettings(bool promptToStop); // FIXME: Remove.
 void setSaveBeforeBuildSettings(bool saveBeforeBuild); // FIXME: Remove.
-
-enum class AppOutputPaneMode { FlashOnOutput, PopupOnOutput, PopupOnFirstOutput };
-
-class AppOutputSettings
-{
-public:
-    AppOutputPaneMode runOutputMode = AppOutputPaneMode::PopupOnFirstOutput;
-    AppOutputPaneMode debugOutputMode = AppOutputPaneMode::FlashOnOutput;
-    bool cleanOldOutput = false;
-    bool mergeChannels = false;
-    bool wrapOutput = false;
-    int maxCharCount = Core::Constants::DEFAULT_MAX_CHAR_COUNT;
-};
 
 void setupProjectExplorerSettings();
 

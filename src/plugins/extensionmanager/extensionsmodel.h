@@ -23,14 +23,23 @@ enum ItemType {
     ItemTypeExtension,
 };
 
+enum ExtensionState {
+    None, // Not a plugin
+    InstalledEnabled,
+    InstalledDisabled,
+    NotInstalled,
+};
+
 enum Role {
     RoleName = Qt::UserRole,
+    RoleCompatVersion,
     RoleCopyright,
     RoleDependencies,
     RoleDescriptionImages,
     RoleDescriptionLinks,
     RoleDescriptionText,
     RoleDownloadCount,
+    RoleExtensionState,
     RoleId,
     RoleItemType,
     RoleLicense,
@@ -54,11 +63,12 @@ public:
     QVariant data(const QModelIndex &index, int role) const;
 
     void setExtensionsJson(const QByteArray &json);
-    static ExtensionSystem::PluginSpec *pluginSpecForName(const QString &pluginName);
 
 private:
     class ExtensionsModelPrivate *d = nullptr;
 };
+
+ExtensionSystem::PluginSpec *pluginSpecForName(const QString &pluginName);
 
 #ifdef WITH_TESTS
 QObject *createExtensionsModelTest();

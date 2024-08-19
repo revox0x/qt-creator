@@ -9,7 +9,6 @@
 #include "iassistproposalwidget.h"
 #include "assistinterface.h"
 #include "assistproposalitem.h"
-#include "textdocumentmanipulator.h"
 
 #include <texteditor/textdocument.h>
 #include <texteditor/texteditor.h>
@@ -20,6 +19,7 @@
 #include <utils/algorithm.h>
 #include <utils/qtcassert.h>
 
+#include <QCoreApplication>
 #include <QKeyEvent>
 #include <QList>
 #include <QObject>
@@ -302,8 +302,7 @@ void CodeAssistantPrivate::displayProposal(IAssistProposal *newProposal, AssistR
 void CodeAssistantPrivate::processProposalItem(AssistProposalItemInterface *proposalItem)
 {
     QTC_ASSERT(m_proposalWidget, return);
-    TextDocumentManipulator manipulator(m_editorWidget);
-    proposalItem->apply(manipulator, m_proposalWidget->basePosition());
+    proposalItem->apply(m_editorWidget, m_proposalWidget->basePosition());
     destroyContext();
     m_editorWidget->encourageApply();
     if (!proposalItem->isSnippet())

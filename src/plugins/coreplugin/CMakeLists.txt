@@ -13,8 +13,6 @@ add_qtc_plugin(Core
     actionmanager/command_p.h
     actionmanager/commandmappings.cpp
     actionmanager/commandmappings.h
-    actionmanager/commandsfile.cpp
-    actionmanager/commandsfile.h
     actionsfilter.cpp
     actionsfilter.h
     basefilewizard.cpp
@@ -45,8 +43,6 @@ add_qtc_plugin(Core
     dialogs/ioptionspage.h
     dialogs/newdialog.cpp
     dialogs/newdialog.h
-    dialogs/newdialogwidget.cpp
-    dialogs/newdialogwidget.h
     dialogs/openwithdialog.cpp
     dialogs/openwithdialog.h
     dialogs/promptoverwritedialog.cpp

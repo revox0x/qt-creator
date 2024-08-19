@@ -45,7 +45,7 @@
         \li Select \uicontrol Add to start from an empty kit or \uicontrol Clone
             to clone the selected kit and edit its preferences.
             \image qtcreator-kits.png
-        \li Set \l{kits-tab}{kit preferences} according to the build system and
+        \li Set \l{Kits}{kit preferences} according to the build system and
             device type.
 
         \li Select \uicontrol OK to create the kit.
@@ -58,8 +58,7 @@
     choose the kit to use. To set the selected kit as the default kit,
     select \uicontrol {Make Default}.
 
-    \sa {Activate kits for a project}, {Add debuggers}, {Add Qt versions},
-    {Open projects}, {Compilers}, {kits-tab}{Kits}
+    \sa {Manage Kits}{How To: Manage Kits}, {Compilers}, {Kits}
 */
 
 /*!
@@ -103,9 +102,14 @@
         \li \uicontrol Name
         \li Name of the kit. You can use variables to generate the kit name
             based on the values you set in the other fields.
-    \row
-        \li \inlineimage icons/qtcreator-desktopdevice-button.png
-        \li Image to use as an icon for the kit.
+
+            Click the \inlineimage icons/qtcreator-desktopdevice-button.png icon next to the field,
+            and select the image that is displayed in the kit selector for this kit.
+            Select \uicontrol Browse to select an
+            image in a supported file format (for example, PNG). The image is
+            scaled to the size 64x64 pixels. For example, using the compiler
+            logo as an icon allows you to easily see, which compiler is used to
+            build the project for the selected kit.
     \row
         \li \uicontrol {File system name}
         \li Name for the kit to use as a part of directory names. This value is
@@ -114,13 +118,6 @@
     \row
         \li \uicontrol{Run device type}
         \li Type of the run device.
-
-            Double-click the icon next to the field to select the image that is
-            displayed in the kit selector for this kit. You can use any
-            image in a supported file format (for example, PNG). The image is
-            scaled to the size 64x64 pixels. For example, using the compiler
-            logo as an icon allows you to easily see, which compiler is used to
-            build the project for the selected kit.
     \row
         \li \uicontrol {Run device}
         \li The device to run applications on.
@@ -214,7 +211,6 @@
             \uicontrol Manage to add installed Ninja tools to the list.
     \endtable
 
-    \sa {Activate kits for a project}, {Open projects}, {Add CMake Tools},
-    {Add compilers}, {Add debuggers}, {Add kits}, {Add Qt versions},
+    \sa {Manage Kits}{How To: Manage Kits}, {Add CMake Tools},
     {Edit Qbs profiles}
 */

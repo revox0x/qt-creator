@@ -6,16 +6,15 @@
 #include "androidconfigurations.h"
 
 #include <projectexplorer/runcontrol.h>
+
 #include <qmldebug/qmldebugcommandlinearguments.h>
 #include <qmldebug/qmloutputparser.h>
 
-#include <QObject>
-#include <QTcpSocket>
-#include <QThread>
-#include <QTimer>
+#include <solutions/tasking/tasktreerunner.h>
 
-namespace Android {
-namespace Internal {
+#include <QThread>
+
+namespace Android::Internal {
 
 class AndroidRunnerWorker;
 
@@ -24,8 +23,7 @@ class AndroidRunner : public ProjectExplorer::RunWorker
     Q_OBJECT
 
 public:
-    explicit AndroidRunner(ProjectExplorer::RunControl *runControl,
-                           const QString &intentName = QString());
+    explicit AndroidRunner(ProjectExplorer::RunControl *runControl);
     ~AndroidRunner() override;
 
     Utils::Port debugServerPort() const { return m_debugServerPort; } // GDB or LLDB
@@ -49,20 +47,15 @@ private:
     void gotRemoteOutput(const QString &output);
     void handleRemoteProcessStarted(Utils::Port debugServerPort, const QUrl &qmlServer, qint64 pid);
     void handleRemoteProcessFinished(const QString &errString = QString());
-    void checkAVD();
-    void launchAVD();
 
-    QString m_packageName;
-    QString m_launchedAVDName;
     QThread m_thread;
-    QTimer m_checkAVDTimer;
-    QScopedPointer<AndroidRunnerWorker> m_worker;
+    AndroidRunnerWorker *m_worker = nullptr;
     QPointer<ProjectExplorer::Target> m_target;
     Utils::Port m_debugServerPort;
     QUrl m_qmlServer;
     Utils::ProcessHandle m_pid;
     QmlDebug::QmlOutputParser m_outputParser;
+    Tasking::TaskTreeRunner m_startAvdRunner;
 };
 
-} // namespace Internal
-} // namespace Android
+} // namespace Android::Internal

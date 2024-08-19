@@ -10,6 +10,7 @@
 #include <projectexplorer/toolchainmanager.h>
 #include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectexplorerconstants.h>
+#include <projectexplorer/toolchainconfigwidget.h>
 
 #include <utils/environment.h>
 
@@ -241,8 +242,22 @@ public:
     {
         setDisplayName(Tr::tr("Android Clang"));
         setSupportedToolchainType(Constants::ANDROID_TOOLCHAIN_TYPEID);
-        setSupportedLanguages({ProjectExplorer::Constants::CXX_LANGUAGE_ID});
+        setSupportedLanguages(
+            {ProjectExplorer::Constants::C_LANGUAGE_ID,
+             ProjectExplorer::Constants::CXX_LANGUAGE_ID});
         setToolchainConstructor([] { return new AndroidToolchain; });
+    }
+
+private:
+    std::unique_ptr<ToolchainConfigWidget> createConfigurationWidget(
+        const ToolchainBundle &bundle) const final
+    {
+        return GccToolchain::createConfigurationWidget(bundle);
+    }
+
+    FilePath correspondingCompilerCommand(const FilePath &srcPath, Id targetLang) const override
+    {
+        return GccToolchain::correspondingCompilerCommand(srcPath, targetLang, "clang", "clang++");
     }
 };
 

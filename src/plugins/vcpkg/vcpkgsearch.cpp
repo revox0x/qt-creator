@@ -7,11 +7,15 @@
 #include "vcpkgsettings.h"
 #include "vcpkgtr.h"
 
+#include <solutions/spinner/spinner.h>
+#include <solutions/tasking/tasktree.h>
+#include <solutions/tasking/tasktreerunner.h>
+
 #include <utils/algorithm.h>
+#include <utils/async.h>
 #include <utils/fancylineedit.h>
 #include <utils/fileutils.h>
 #include <utils/infolabel.h>
-#include <utils/itemviews.h>
 #include <utils/layoutbuilder.h>
 
 #include <coreplugin/icore.h>
@@ -20,6 +24,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QListWidget>
 #include <QTextBrowser>
 
 using namespace Utils;
@@ -37,6 +42,7 @@ private:
     void listPackages(const QString &filter);
     void showPackageDetails(const QString &packageName);
     void updateStatus();
+    void updatePackages();
 
     VcpkgManifests m_allPackages;
     VcpkgManifest m_selectedPackage;
@@ -44,7 +50,7 @@ private:
     const VcpkgManifest m_projectManifest;
 
     FancyLineEdit *m_packagesFilter;
-    ListWidget *m_packagesList;
+    QListWidget *m_packagesList;
     QLineEdit *m_vcpkgName;
     QLabel *m_vcpkgVersion;
     QLabel *m_vcpkgLicense;
@@ -52,6 +58,8 @@ private:
     QLabel *m_vcpkgHomepage;
     InfoLabel *m_infoLabel;
     QDialogButtonBox *m_buttonBox;
+    SpinnerSolution::Spinner *m_spinner;
+    Tasking::TaskTreeRunner m_taskTreeRunner;
 };
 
 VcpkgPackageSearchDialog::VcpkgPackageSearchDialog(const VcpkgManifest &preexistingPackages,
@@ -67,7 +75,7 @@ VcpkgPackageSearchDialog::VcpkgPackageSearchDialog(const VcpkgManifest &preexist
     m_packagesFilter->setFocus();
     m_packagesFilter->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
 
-    m_packagesList = new ListWidget;
+    m_packagesList = new QListWidget;
     m_packagesList->setMaximumWidth(300);
 
     m_vcpkgName = new QLineEdit;
@@ -112,14 +120,14 @@ VcpkgPackageSearchDialog::VcpkgPackageSearchDialog(const VcpkgManifest &preexist
     }.attachTo(this);
     // clang-format on
 
-    m_allPackages = vcpkgManifests(settings().vcpkgRoot());
+    m_spinner = new SpinnerSolution::Spinner(SpinnerSolution::SpinnerSize::Large, this);
 
-    listPackages({});
     updateStatus();
+    updatePackages();
 
     connect(m_packagesFilter, &FancyLineEdit::filterChanged,
             this, &VcpkgPackageSearchDialog::listPackages);
-    connect(m_packagesList, &ListWidget::currentTextChanged,
+    connect(m_packagesList, &QListWidget::currentTextChanged,
             this, &VcpkgPackageSearchDialog::showPackageDetails);
     connect(m_buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(m_buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
@@ -175,6 +183,38 @@ void VcpkgPackageSearchDialog::updateStatus()
     m_infoLabel->setVisible(isProjectDependency);
     m_buttonBox->button(QDialogButtonBox::Ok)->setEnabled(!(package.isEmpty()
                                                             || isProjectDependency));
+}
+
+void VcpkgPackageSearchDialog::updatePackages()
+{
+    using ResultType = VcpkgManifests;
+
+    const auto parseManifests = [=](QPromise<ResultType> &promise, const FilePath &srcPath) {
+        promise.addResult(vcpkgManifests(srcPath));
+    };
+
+    using namespace Tasking;
+    Group group {
+        onGroupSetup([this]() {
+            m_spinner->show();
+        }),
+        AsyncTask<ResultType>{
+            [parseManifests](Async<ResultType> &task) {
+                task.setConcurrentCallData(parseManifests,
+                                           settings().vcpkgRoot());
+            },
+            [this](const Async<ResultType> &task) {
+                m_allPackages = task.result();
+            }
+        },
+        onGroupDone([this]() {
+            m_spinner->hide();
+            listPackages({});
+            updateStatus();
+        }),
+    };
+
+    m_taskTreeRunner.start(group);
 }
 
 VcpkgManifest parseVcpkgManifest(const QByteArray &vcpkgManifestJsonData, bool *ok)

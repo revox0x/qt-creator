@@ -10,6 +10,7 @@
 #include "coreplugintr.h"
 #include "coreplugintr.h"
 #include "dialogs/externaltoolconfig.h"
+#include "dialogs/ioptionspage.h"
 #include "dialogs/settingsdialog.h"
 #include "dialogs/shortcutsettings.h"
 #include "documentmanager.h"
@@ -59,6 +60,7 @@
 #include <utils/guiutils.h>
 #include <utils/historycompleter.h>
 #include <utils/hostosinfo.h>
+#include <utils/layoutbuilder.h>
 #include <utils/mimeutils.h>
 #include <utils/proxyaction.h>
 #include <utils/qtcassert.h>
@@ -79,6 +81,7 @@
 #include <QDebug>
 #include <QDialogButtonBox>
 #include <QLibraryInfo>
+#include <QLoggingCategory>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -95,6 +98,8 @@
 #ifdef Q_OS_LINUX
 #include <malloc.h>
 #endif
+
+Q_LOGGING_CATEGORY(coreLog, "qtc.core", QtWarningMsg)
 
 /*!
     \namespace Core
@@ -199,7 +204,6 @@
     from the focus object as well as the additional context.
 */
 
-#include "dialogs/newdialogwidget.h"
 #include "dialogs/newdialog.h"
 #include "iwizardfactory.h"
 #include "documentmanager.h"
@@ -250,10 +254,6 @@ static QColor s_overrideColor;
 // The Core Singleton
 static ICore *m_core = nullptr;
 
-static NewDialog *defaultDialogFactory(QWidget *parent)
-{
-    return new NewDialogWidget(parent);
-}
 class ICorePrivate : public QObject
 {
 public:
@@ -267,8 +267,6 @@ public:
     void aboutToShowRecentFiles();
 
     static void setFocusToEditor();
-    void aboutQtCreator();
-    void aboutPlugins();
     void changeLog();
     void contact();
     void updateFocusWidget(QWidget *old, QWidget *now);
@@ -285,19 +283,16 @@ public:
 
     void registerDefaultContainers();
     void registerDefaultActions();
-    void registerModeSelectorStyleActions();
 
     void readSettings();
     void saveWindowSettings();
 
-    void updateModeSelectorStyleMenu();
-
     MainWindow *m_mainwindow = nullptr;
     QTimer m_trimTimer;
+    QString m_prependAboutInformation;
     QStringList m_aboutInformation;
     Context m_highPrioAdditionalContexts;
     Context m_lowPrioAdditionalContexts{Constants::C_GLOBAL};
-    mutable QPrinter *m_printer = nullptr;
     WindowSupport *m_windowSupport = nullptr;
     EditorManager *m_editorManager = nullptr;
     ExternalToolManager *m_externalToolManager = nullptr;
@@ -309,28 +304,21 @@ public:
     NavigationWidget *m_leftNavigationWidget = nullptr;
     NavigationWidget *m_rightNavigationWidget = nullptr;
     RightPaneWidget *m_rightPaneWidget = nullptr;
-    VersionDialog *m_versionDialog = nullptr;
 
     QList<IContext *> m_activeContext;
 
     std::unordered_map<QWidget *, QList<IContext *>> m_contextWidgets;
 
-    ShortcutSettings *m_shortcutSettings = nullptr;
-    ToolSettings *m_toolSettings = nullptr;
-    MimeTypeSettings *m_mimeTypeSettings = nullptr;
-    SystemEditor *m_systemEditor = nullptr;
-
     // actions
     QAction *m_toggleLeftSideBarAction = nullptr;
     QAction *m_toggleRightSideBarAction = nullptr;
     QAction *m_toggleMenubarAction = nullptr;
-    QAction *m_setModeSelectorStyleIconsAndTextAction = nullptr;
-    QAction *m_setModeSelectorStyleHiddenAction = nullptr;
-    QAction *m_setModeSelectorStyleIconsOnlyAction = nullptr;
 
     QToolButton *m_toggleLeftSideBarButton = nullptr;
     QToolButton *m_toggleRightSideBarButton = nullptr;
     QList<std::function<bool()>> m_preCloseListeners;
+
+    std::function<Utils::FilePath(const Utils::FilePath &)> m_relativePathToProject = nullptr;
 };
 
 static QMenuBar *globalMenuBar()
@@ -342,7 +330,7 @@ static QMenuBar *globalMenuBar()
 
 static ICorePrivate *d = nullptr;
 
-static std::function<NewDialog *(QWidget *)> m_newDialogFactory = defaultDialogFactory;
+static std::function<NewDialog *(QWidget *)> m_newDialogFactory = &createDefaultNewDialog;
 
 /*!
     Returns the pointer to the instance. Only use for connecting to signals.
@@ -448,7 +436,7 @@ void ICore::showNewItemDialog(const QString &title,
     });
 
     if (!haveProjectWizards)
-        dialogFactory = defaultDialogFactory;
+        dialogFactory = &createDefaultNewDialog;
 
     NewDialog *newDialog = dialogFactory(dialogParent());
     connect(newDialog->widget(), &QObject::destroyed, m_core, &ICore::updateNewItemDialogState);
@@ -586,9 +574,8 @@ QtcSettings *ICore::settings(QSettings::Scope scope)
 */
 QPrinter *ICore::printer()
 {
-    if (!d->m_printer)
-        d->m_printer = new QPrinter(QPrinter::HighResolution);
-    return d->m_printer;
+    static QPrinter thePrinter(QPrinter::HighResolution);
+    return &thePrinter;
 }
 
 /*!
@@ -621,9 +608,7 @@ static QString pathHelper(const QString &rel)
 */
 FilePath ICore::resourcePath(const QString &rel)
 {
-    return FilePath::fromString(
-               QDir::cleanPath(QCoreApplication::applicationDirPath() + '/' + RELATIVE_DATA_PATH))
-           / rel;
+    return appInfo().resources / rel;
 }
 
 /*!
@@ -638,17 +623,7 @@ FilePath ICore::resourcePath(const QString &rel)
 
 FilePath ICore::userResourcePath(const QString &rel)
 {
-    // Create qtcreator dir if it doesn't yet exist
-    const QString configDir = QFileInfo(settings(QSettings::UserScope)->fileName()).path();
-    const QString urp = configDir + '/' + appInfo().id;
-
-    if (!QFileInfo::exists(urp + QLatin1Char('/'))) {
-        QDir dir;
-        if (!dir.mkpath(urp))
-            qWarning() << "could not create" << urp;
-    }
-
-    return FilePath::fromString(urp + pathHelper(rel));
+    return appInfo().userResources / rel;
 }
 
 /*!
@@ -668,38 +643,6 @@ FilePath ICore::installerResourcePath(const QString &rel)
 {
     return FilePath::fromString(settings(QSettings::SystemScope)->fileName()).parentDir()
            / appInfo().id / rel;
-}
-
-/*!
-    Returns the path to the plugins that are included in the \QC installation.
-
-    \internal
-*/
-QString ICore::pluginPath()
-{
-    return QDir::cleanPath(QCoreApplication::applicationDirPath() + '/' + RELATIVE_PLUGIN_PATH);
-}
-
-/*!
-    Returns the path where user-specific plugins should be written.
-
-    \internal
-*/
-QString ICore::userPluginPath()
-{
-    const QVersionNumber appVersion = QVersionNumber::fromString(
-        QCoreApplication::applicationVersion());
-    QString pluginPath = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
-    if (Utils::HostOsInfo::isAnyUnixHost() && !Utils::HostOsInfo::isMacHost())
-        pluginPath += "/data";
-    pluginPath += '/' + QCoreApplication::organizationName() + '/';
-    pluginPath += Utils::HostOsInfo::isMacHost() ? QGuiApplication::applicationDisplayName()
-                                                 : appInfo().id;
-    pluginPath += "/plugins/";
-    pluginPath += QString::number(appVersion.majorVersion()) + '.'
-                  + QString::number(appVersion.minorVersion()) + '.'
-                  + QString::number(appVersion.microVersion());
-    return pluginPath;
 }
 
 /*!
@@ -851,7 +794,7 @@ QList<IContext *> ICore::currentContextObjects()
     Returns the widget of the top level IContext of the current context, or \c
     nullptr if there is none.
 
-    \sa currentContextObject()
+    \sa currentContextObjects()
 */
 QWidget *ICore::currentContextWidget()
 {
@@ -1050,7 +993,8 @@ QString uiConfigInformation()
     info.append(QString("Language: %1\n").arg(userInterfaceLanguage));
     info.append(QString("Device pixel ratio: %1, Qt::HighDpiScaleFactorRoundingPolicy::%2\n")
                     .arg(qApp->devicePixelRatio()).arg(policy));
-    info.append(QString("Font DPI: %1\n").arg(qApp->fontMetrics().fontDpi()));
+    const QFontMetricsF fm(qApp->font());
+    info.append(QString("Font DPI: %1\n").arg(fm.fontDpi()));
 
     info.append(QString("Utils::StyleHelper::UiElement:\n"));
 #define QTC_ADD_UIELEMENT_FONT(uiElement) (                                              \
@@ -1160,7 +1104,7 @@ void ICore::restart()
 */
 void ICore::setRelativePathToProjectFunction(const std::function<FilePath(const FilePath &)> &func)
 {
-    m_core->m_relativePathToProject = func;
+    d->m_relativePathToProject = func;
 }
 
 /*!
@@ -1168,8 +1112,8 @@ void ICore::setRelativePathToProjectFunction(const std::function<FilePath(const 
 */
 FilePath ICore::pathRelativeToActiveProject(const FilePath &path)
 {
-    if (m_core->m_relativePathToProject)
-        return m_core->m_relativePathToProject(path);
+    if (d->m_relativePathToProject)
+        return d->m_relativePathToProject(path);
 
     return path;
 }
@@ -1217,7 +1161,9 @@ void ICore::saveSettings(SaveSettingsReason reason)
 */
 QStringList ICore::additionalAboutInformation()
 {
-    return d->m_aboutInformation;
+    auto aboutInformation = d->m_aboutInformation;
+    aboutInformation.prepend(d->m_prependAboutInformation);
+    return aboutInformation;
 }
 
 /*!
@@ -1226,6 +1172,14 @@ QStringList ICore::additionalAboutInformation()
 void ICore::clearAboutInformation()
 {
     d->m_aboutInformation.clear();
+}
+
+/*!
+    \internal
+*/
+void ICore::setPrependAboutInformation(const QString &line)
+{
+    d->m_prependAboutInformation = line;
 }
 
 /*!
@@ -1333,8 +1287,6 @@ static bool hideToolsMenu()
     return Core::ICore::settings()->value(Constants::SETTINGS_MENU_HIDE_TOOLS, false).toBool();
 }
 
-enum { debugMainWindow = 0 };
-
 namespace Internal {
 
 void ICorePrivate::init()
@@ -1345,10 +1297,11 @@ void ICorePrivate::init()
     m_jsExpander = JsExpander::createGlobalJsExpander();
     m_vcsManager = new VcsManager;
     m_modeStack = new FancyTabWidget(m_mainwindow);
-    m_shortcutSettings = new ShortcutSettings;
-    m_toolSettings = new ToolSettings;
-    m_mimeTypeSettings = new MimeTypeSettings;
-    m_systemEditor = new SystemEditor;
+
+    setupShortcutSettings();
+    setupExternalToolSettings();
+    setupSystemEditor();
+
     m_toggleLeftSideBarButton = new QToolButton;
     m_toggleRightSideBarButton = new QToolButton;
 
@@ -1379,8 +1332,8 @@ void ICorePrivate::init()
     QApplication::setStyle(new ManhattanStyle(baseName));
 
     m_modeManager = new ModeManager(m_modeStack);
-    connect(m_modeStack, &FancyTabWidget::topAreaClicked, this, [](Qt::MouseButton, Qt::KeyboardModifiers modifiers) {
-        if (modifiers & Qt::ShiftModifier) {
+    connect(m_modeStack, &FancyTabWidget::topAreaClicked, this, [](QMouseEvent *event) {
+        if (event->modifiers() & Qt::ShiftModifier) {
             QColor color = QColorDialog::getColor(StyleHelper::requestedBaseColor(), ICore::dialogParent());
             if (color.isValid())
                 StyleHelper::setBaseColor(color);
@@ -1455,16 +1408,6 @@ ICorePrivate::~ICorePrivate()
     delete m_externalToolManager;
     m_externalToolManager = nullptr;
     MessageManager::destroy();
-    delete m_shortcutSettings;
-    m_shortcutSettings = nullptr;
-    delete m_toolSettings;
-    m_toolSettings = nullptr;
-    delete m_mimeTypeSettings;
-    m_mimeTypeSettings = nullptr;
-    delete m_systemEditor;
-    m_systemEditor = nullptr;
-    delete m_printer;
-    m_printer = nullptr;
     delete m_vcsManager;
     m_vcsManager = nullptr;
     //we need to delete editormanager and statusbarmanager explicitly before the end of the destructor,
@@ -1501,7 +1444,7 @@ ICorePrivate::~ICorePrivate()
 void ICore::extensionsInitialized()
 {
     EditorManagerPrivate::extensionsInitialized();
-    MimeTypeSettings::restoreSettings();
+    setupMimeTypeSettings();
     d->m_windowSupport = new WindowSupport(d->m_mainwindow, Context("Core.MainWindow"));
     d->m_windowSupport->setCloseActionEnabled(false);
     OutputPaneManager::initialize();
@@ -1629,6 +1572,7 @@ void ICorePrivate::registerDefaultContainers()
     filemenu->menu()->setTitle(Tr::tr("&File"));
     filemenu->appendGroup(Constants::G_FILE_NEW);
     filemenu->appendGroup(Constants::G_FILE_OPEN);
+    filemenu->appendGroup(Constants::G_FILE_RECENT);
     filemenu->appendGroup(Constants::G_FILE_SESSION);
     filemenu->appendGroup(Constants::G_FILE_PROJECT);
     filemenu->appendGroup(Constants::G_FILE_SAVE);
@@ -1653,6 +1597,8 @@ void ICorePrivate::registerDefaultContainers()
     ActionContainer *mview = ActionManager::createMenu(Constants::M_VIEW);
     menubar->addMenu(mview, Constants::G_VIEW);
     mview->menu()->setTitle(Tr::tr("&View"));
+    mview->appendGroup(Constants::G_VIEW_SIDEBAR);
+    mview->appendGroup(Constants::G_VIEW_MODES);
     mview->appendGroup(Constants::G_VIEW_VIEWS);
     mview->appendGroup(Constants::G_VIEW_PANES);
 
@@ -1785,7 +1731,7 @@ void ICorePrivate::registerDefaultActions()
 
     // File->Recent Files Menu
     ActionContainer *ac = ActionManager::createMenu(Constants::M_FILE_RECENTFILES);
-    mfile->addMenu(ac, Constants::G_FILE_OPEN);
+    mfile->addMenu(ac, Constants::G_FILE_RECENT);
     ac->menu()->setTitle(Tr::tr("Recent &Files"));
     ac->setOnAllDisabledBehavior(ActionContainer::Show);
 
@@ -1979,7 +1925,7 @@ void ICorePrivate::registerDefaultActions()
     toggleLeftSideBarAction.setCheckable(true);
     toggleLeftSideBarAction.setCommandAttribute(Command::CA_UpdateText);
     toggleLeftSideBarAction.setDefaultKeySequence(Tr::tr("Ctrl+0"), Tr::tr("Alt+0"));
-    toggleLeftSideBarAction.addToContainer(Constants::M_VIEW, Constants::G_VIEW_VIEWS);
+    toggleLeftSideBarAction.addToContainer(Constants::M_VIEW, Constants::G_VIEW_SIDEBAR);
     toggleLeftSideBarAction.addOnTriggered(this,
         [this](bool visible) { setSidebarVisible(visible, Side::Left); });
 
@@ -1995,7 +1941,7 @@ void ICorePrivate::registerDefaultActions()
     toggleRightSideBarAction.setCheckable(true);
     toggleRightSideBarAction.setCommandAttribute(Command::CA_UpdateText);
     toggleRightSideBarAction.setDefaultKeySequence(Tr::tr("Ctrl+Shift+0"), Tr::tr("Alt+Shift+0"));
-    toggleRightSideBarAction.addToContainer(Constants::M_VIEW, Constants::G_VIEW_VIEWS);
+    toggleRightSideBarAction.addToContainer(Constants::M_VIEW, Constants::G_VIEW_SIDEBAR);
     toggleRightSideBarAction.setEnabled(false);
     toggleRightSideBarAction.addOnTriggered(this,
         [this](bool visible) { setSidebarVisible(visible, Side::Right); });
@@ -2011,7 +1957,7 @@ void ICorePrivate::registerDefaultActions()
         toggleMenubarAction.bindContextAction(&m_toggleMenubarAction);
         toggleMenubarAction.setCheckable(true);
         toggleMenubarAction.setDefaultKeySequence(Tr::tr("Ctrl+Alt+M"));
-        toggleMenubarAction.addToContainer(Constants::M_VIEW, Constants::G_VIEW_VIEWS);
+        toggleMenubarAction.addToContainer(Constants::M_VIEW, Constants::G_VIEW_SIDEBAR);
         toggleMenubarAction.addOnToggled(this, [](bool visible) {
             if (!visible) {
                 auto keySequenceAndText = [](const Utils::Id &actionName) {
@@ -2045,8 +1991,6 @@ void ICorePrivate::registerDefaultActions()
         });
     }
 
-    registerModeSelectorStyleActions();
-
     // Window->Views
     ActionContainer *mviews = ActionManager::createMenu(Constants::M_VIEW_VIEWS);
     mview->addMenu(mviews, Constants::G_VIEW_VIEWS);
@@ -2066,7 +2010,7 @@ void ICorePrivate::registerDefaultActions()
     aboutIdeAction.setMenuRole(QAction::AboutRole);
     aboutIdeAction.addToContainer(Constants::M_HELP, Constants::G_HELP_ABOUT);
     aboutIdeAction.setEnabled(true);
-    aboutIdeAction.addOnTriggered(this, [this] { aboutQtCreator(); });
+    aboutIdeAction.addOnTriggered(this, &showAboutQtCreator);
 
     // About Plugins Action
     ActionBuilder aboutPluginsAction(this, Constants::ABOUT_PLUGINS);
@@ -2074,7 +2018,7 @@ void ICorePrivate::registerDefaultActions()
     aboutPluginsAction.setMenuRole(QAction::ApplicationSpecificRole);
     aboutPluginsAction.addToContainer(Constants::M_HELP, Constants::G_HELP_ABOUT);
     aboutPluginsAction.setEnabled(true);
-    aboutPluginsAction.addOnTriggered(this, [this] { aboutPlugins(); });
+    aboutPluginsAction.addOnTriggered(this, &showAboutPlugins);
 
     // Change Log Action
     ActionBuilder changeLogAction(this, Constants::CHANGE_LOG);
@@ -2097,42 +2041,6 @@ void ICorePrivate::registerDefaultActions()
         tmpAction.setSeperator(true);
         tmpAction.addToContainer(Constants::M_HELP, Constants::G_HELP_ABOUT);
     }
-}
-
-void ICorePrivate::registerModeSelectorStyleActions()
-{
-    ActionContainer *mview = ActionManager::actionContainer(Constants::M_VIEW);
-
-    // Cycle Mode Selector Styles
-    ActionBuilder(this, Constants::CYCLE_MODE_SELECTOR_STYLE)
-        .setText(Tr::tr("Cycle Mode Selector Styles"))
-        .addOnTriggered(this, [this] {
-            ModeManager::cycleModeStyle();
-            updateModeSelectorStyleMenu();
-        });
-
-    // Mode Selector Styles
-    ActionContainer *mmodeLayouts = ActionManager::createMenu(Constants::M_VIEW_MODESTYLES);
-    mview->addMenu(mmodeLayouts, Constants::G_VIEW_VIEWS);
-    QMenu *styleMenu = mmodeLayouts->menu();
-    styleMenu->setTitle(Tr::tr("Mode Selector Style"));
-    auto *stylesGroup = new QActionGroup(styleMenu);
-    stylesGroup->setExclusive(true);
-
-    m_setModeSelectorStyleIconsAndTextAction = stylesGroup->addAction(Tr::tr("Icons and Text"));
-    connect(m_setModeSelectorStyleIconsAndTextAction, &QAction::triggered,
-                                 [] { ModeManager::setModeStyle(ModeManager::Style::IconsAndText); });
-    m_setModeSelectorStyleIconsAndTextAction->setCheckable(true);
-    m_setModeSelectorStyleIconsOnlyAction = stylesGroup->addAction(Tr::tr("Icons Only"));
-    connect(m_setModeSelectorStyleIconsOnlyAction, &QAction::triggered,
-                                 [] { ModeManager::setModeStyle(ModeManager::Style::IconsOnly); });
-    m_setModeSelectorStyleIconsOnlyAction->setCheckable(true);
-    m_setModeSelectorStyleHiddenAction = stylesGroup->addAction(Tr::tr("Hidden"));
-    connect(m_setModeSelectorStyleHiddenAction, &QAction::triggered,
-                                 [] { ModeManager::setModeStyle(ModeManager::Style::Hidden); });
-    m_setModeSelectorStyleHiddenAction->setCheckable(true);
-
-    styleMenu->addActions(stylesGroup->actions());
 }
 
 void ICorePrivate::openFile()
@@ -2299,7 +2207,7 @@ QList<IContext *> ICore::contextObjects(QWidget *widget)
 
     \sa removeContextObject()
     \sa updateAdditionalContexts()
-    \sa currentContextObject()
+    \sa currentContextObjects()
     \sa {The Action Manager and Commands}
 */
 
@@ -2318,7 +2226,7 @@ void ICore::addContextObject(IContext *context)
 
     \sa addContextObject()
     \sa updateAdditionalContexts()
-    \sa currentContextObject()
+    \sa currentContextObjects()
 */
 
 void ICore::removeContextObject(IContext *context)
@@ -2369,11 +2277,6 @@ void ICorePrivate::updateContextObject(const QList<IContext *> &context)
     emit m_core->contextAboutToChange(context);
     m_activeContext = context;
     updateContext();
-    if (debugMainWindow) {
-        qDebug() << "new context objects =" << context;
-        for (const IContext *c : context)
-            qDebug() << (c ? c->widget() : nullptr) << (c ? c->widget()->metaObject()->className() : nullptr);
-    }
 }
 
 void ICorePrivate::readSettings()
@@ -2402,7 +2305,6 @@ void ICorePrivate::readSettings()
         }
 
         ModeManager::setModeStyle(modeStyle);
-        updateModeSelectorStyleMenu();
     }
 
     if (globalMenuBar() && !globalMenuBar()->isNativeMenuBar()) {
@@ -2439,21 +2341,6 @@ void ICorePrivate::saveWindowSettings()
     settings->endGroup();
 }
 
-void ICorePrivate::updateModeSelectorStyleMenu()
-{
-    switch (ModeManager::modeStyle()) {
-    case ModeManager::Style::IconsAndText:
-        m_setModeSelectorStyleIconsAndTextAction->setChecked(true);
-        break;
-    case ModeManager::Style::IconsOnly:
-        m_setModeSelectorStyleIconsOnlyAction->setChecked(true);
-        break;
-    case ModeManager::Style::Hidden:
-        m_setModeSelectorStyleHiddenAction->setChecked(true);
-        break;
-    }
-}
-
 void ICorePrivate::updateContext()
 {
     Context contexts = m_highPrioAdditionalContexts;
@@ -2469,6 +2356,19 @@ void ICorePrivate::updateContext()
             uniquecontexts.add(id);
     }
 
+    if (coreLog().isDebugEnabled()) {
+        qCDebug(coreLog) << "Context changed:";
+        qCDebug(coreLog) << "    "
+                         << Utils::transform<QList<QString>>(uniquecontexts, &Id::toString);
+        qCDebug(coreLog) << "    "
+                         << Utils::transform<QList<QString>>(m_activeContext, [](IContext *c) {
+                                return QString("%1: %2").arg(
+                                    QString::fromUtf8(c->metaObject()->className()),
+                                    c->widget()
+                                        ? QString::fromUtf8(c->widget()->metaObject()->className())
+                                        : QString("<no widget>"));
+                            });
+    }
     ActionManager::setContext(uniquecontexts);
     emit m_core->contextChanged(uniquecontexts);
 }
@@ -2501,33 +2401,6 @@ void ICorePrivate::aboutToShowRecentFiles()
         connect(action, &QAction::triggered,
                 DocumentManager::instance(), &DocumentManager::clearRecentFiles);
     }
-}
-
-void ICorePrivate::aboutQtCreator()
-{
-    if (!m_versionDialog) {
-        m_versionDialog = new VersionDialog(m_mainwindow);
-        connect(m_versionDialog, &QDialog::finished,
-                this, &ICorePrivate::destroyVersionDialog);
-        ICore::registerWindow(m_versionDialog, Context("Core.VersionDialog"));
-        m_versionDialog->show();
-    } else {
-        ICore::raiseWindow(m_versionDialog);
-    }
-}
-
-void ICorePrivate::destroyVersionDialog()
-{
-    if (m_versionDialog) {
-        m_versionDialog->deleteLater();
-        m_versionDialog = nullptr;
-    }
-}
-
-void ICorePrivate::aboutPlugins()
-{
-    PluginDialog dialog(m_mainwindow);
-    dialog.exec();
 }
 
 class LogDialog : public QDialog
@@ -2576,41 +2449,32 @@ void ICorePrivate::changeLog()
     for (const VersionFilePair &f : versionedFiles)
         versionCombo->addItem(f.first.toString());
     dialog = new LogDialog(ICore::dialogParent());
-    auto versionLayout = new QHBoxLayout;
-    versionLayout->addWidget(new QLabel(Tr::tr("Version:")));
-    versionLayout->addWidget(versionCombo);
-    versionLayout->addStretch(1);
     auto showInExplorer = new QPushButton(FileUtils::msgGraphicalShellAction());
-    versionLayout->addWidget(showInExplorer);
     auto textEdit = new QTextBrowser;
     textEdit->setOpenExternalLinks(true);
 
-    auto aggregate = new Aggregation::Aggregate;
-    aggregate->add(textEdit);
-    aggregate->add(new Core::BaseTextFind(textEdit));
+    Aggregation::aggregate({textEdit, new BaseTextFind(textEdit)});
 
     new MarkdownHighlighter(textEdit->document());
 
-    auto textEditWidget = new QFrame;
-    textEditWidget->setFrameStyle(QFrame::NoFrame);
     auto findToolBar = new FindToolBarPlaceHolder(dialog);
     findToolBar->setLightColored(true);
-    auto textEditLayout = new QVBoxLayout;
-    textEditLayout->setContentsMargins(0, 0, 0, 0);
-    textEditLayout->setSpacing(0);
-    textEditLayout->addWidget(textEdit);
-    textEditLayout->addWidget(findToolBar);
-    textEditWidget->setLayout(textEditLayout);
     auto buttonBox = new QDialogButtonBox(QDialogButtonBox::Close);
-    auto dialogLayout = new QVBoxLayout;
-    dialogLayout->addLayout(versionLayout);
-    dialogLayout->addWidget(textEditWidget);
-    dialogLayout->addWidget(buttonBox);
-    dialog->setLayout(dialogLayout);
     dialog->resize(700, 600);
     dialog->setWindowTitle(Tr::tr("Change Log"));
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     ICore::registerWindow(dialog, Context("CorePlugin.VersionDialog"));
+
+    using namespace Layouting;
+    Column {
+        Row { Tr::tr("Version:"), versionCombo, st, showInExplorer },
+        Column {
+            textEdit,
+            findToolBar,
+            spacing(0),
+        },
+        buttonBox,
+    }.attachTo(dialog);
 
     connect(buttonBox, &QDialogButtonBox::rejected, dialog, &QDialog::close);
     QPushButton *closeButton = buttonBox->button(QDialogButtonBox::Close);

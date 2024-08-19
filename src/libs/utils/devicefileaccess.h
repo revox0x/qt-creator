@@ -6,11 +6,14 @@
 #include "hostosinfo.h"
 #include "utils_global.h"
 
-#include "fileutils.h"
+#include "filepath.h"
 
 class tst_unixdevicefileaccess; // For testing.
 
 namespace Utils {
+
+class CommandLine;
+class RunResult;
 
 // Base class including dummy implementation usable as fallback.
 class QTCREATOR_UTILS_EXPORT DeviceFileAccess
@@ -72,11 +75,14 @@ protected:
                                                    const QByteArray &data) const;
 
     virtual expected_str<FilePath> createTempFile(const FilePath &filePath);
+
+    virtual Utils::expected_str<std::unique_ptr<FilePathWatcher>> watch(const FilePath &path) const;
 };
 
 class QTCREATOR_UTILS_EXPORT DesktopDeviceFileAccess : public DeviceFileAccess
 {
 public:
+    DesktopDeviceFileAccess();
     ~DesktopDeviceFileAccess() override;
 
     static DesktopDeviceFileAccess *instance();
@@ -128,6 +134,7 @@ protected:
 
     expected_str<FilePath> createTempFile(const FilePath &filePath) override;
 
+    Utils::expected_str<std::unique_ptr<FilePathWatcher>> watch(const FilePath &path) const override;
 };
 
 class QTCREATOR_UTILS_EXPORT UnixDeviceFileAccess : public DeviceFileAccess

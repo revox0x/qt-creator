@@ -47,3 +47,27 @@ static void parenTest()
 
 const char* s7 = R"(
 ))";
+
+// comment
+{
+
+}
+
+/*
+ *
+ */
+{
+
+}
+
+static void parenTest2()
+{
+
+    parenTest();
+    {
+
+    }
+}
+
+wchar_t operator ""_wc(const wchar_t c) { return c; }
+const auto c = L'c'_wc;

@@ -7,7 +7,7 @@
 #include <qmldesignerplugin.h>
 
 #include <bindingproperty.h>
-#include <model/modelutils.h>
+#include <modelutils.h>
 #include <nodeabstractproperty.h>
 #include <nodelistproperty.h>
 #include <nodemetainfo.h>
@@ -244,6 +244,9 @@ QTextStream &operator<<(QTextStream &stream, AuxiliaryDataType type)
     case AuxiliaryDataType::Temporary:
         stream << "Temporary";
         break;
+    case AuxiliaryDataType::Persistent:
+        stream << "Persistent";
+        break;
     }
 
     return stream;
@@ -393,7 +396,7 @@ void DebugView::auxiliaryDataChanged(const ModelNode &node,
 
         message << node;
         message << key.type;
-        message << QByteArray{key.name};
+        message << key.name.toByteArray();
         message << data.toString();
 
         log("::auxiliaryDataChanged:", string);
@@ -436,7 +439,6 @@ WidgetInfo DebugView::widgetInfo()
     return createWidgetInfo(m_debugViewWidget.data(),
                             QStringLiteral("DebugView"),
                             WidgetInfo::LeftPane,
-                            0,
                             tr("Debug View"));
 }
 

@@ -11,19 +11,11 @@
 #include <utils/environment.h>
 #include <utils/port.h>
 
-namespace Utils {
-class FilePath;
-class Process;
-}
+namespace Android { class AndroidDeviceInfo; }
 namespace ProjectExplorer { class RunWorker; }
+namespace Utils { class Process; }
 
-namespace Android {
-
-class AndroidDeviceInfo;
-
-namespace Internal {
-
-const int MIN_SOCKET_HANDSHAKE_PORT = 20001;
+namespace Android::Internal {
 
 using PidUserPair = std::pair<qint64, qint64>;
 
@@ -31,14 +23,12 @@ class AndroidRunnerWorker : public QObject
 {
     Q_OBJECT
 public:
-    AndroidRunnerWorker(ProjectExplorer::RunWorker *runner, const QString &packageName);
+    AndroidRunnerWorker(ProjectExplorer::RunWorker *runner);
     ~AndroidRunnerWorker() override;
 
     void setAndroidDeviceInfo(const AndroidDeviceInfo &info);
     void asyncStart();
     void asyncStop();
-    void setIsPreNougat(bool isPreNougat) { m_isPreNougat = isPreNougat; }
-    void setIntentName(const QString &intentName) { m_intentName = intentName; }
 
 signals:
     void remoteProcessStarted(Utils::Port debugServerPort, const QUrl &qmlServer, qint64 pid);
@@ -48,8 +38,7 @@ signals:
     void remoteErrorOutput(const QString &output);
 
 private:
-    bool runAdb(const QStringList &args, QString *stdOut = nullptr, QString *stdErr = nullptr,
-                const QByteArray &writeData = {});
+    bool runAdb(const QStringList &args, QString *stdOut = nullptr, QString *stdErr = nullptr);
     QStringList selector() const;
     void forceStop();
     void logcatReadStandardError();
@@ -59,11 +48,11 @@ private:
     void handleJdbWaiting();
     void handleJdbSettled();
 
-    void removeForwardPort(const QString &port);
+    bool removeForwardPort(const QString &port, const QString &adbArg, const QString &portType);
 
     void asyncStartHelper();
     void startNativeDebugging();
-    bool startDebuggerServer(const QString &packageDir, const QString &debugServerFile, QString *errorStr = nullptr);
+    void startDebuggerServer(const QString &packageDir, const QString &debugServerFile);
     bool deviceFileExists(const QString &filePath);
     bool packageFileExists(const QString& filePath);
     bool uploadDebugServer(const QString &debugServerFileName);
@@ -75,9 +64,13 @@ private:
         Settled
     };
     void onProcessIdChanged(const PidUserPair &pidUser);
+    bool isPreNougat() const { return m_apiLevel > 0 && m_apiLevel <= 23; }
+    Tasking::ExecutableItem removeForwardPortRecipe(const QString &port, const QString &adbArg,
+                                                    const QString &portType);
+    Tasking::ExecutableItem preStartRecipe();
+    Tasking::ExecutableItem pidRecipe();
 
     // Create the processes and timer in the worker thread, for correct thread affinity
-    bool m_isPreNougat = false;
     QString m_packageName;
     QString m_intentName;
     QStringList m_beforeStartAdbCommands;
@@ -89,14 +82,12 @@ private:
     std::unique_ptr<Utils::Process> m_psIsAlive;
     QByteArray m_stdoutBuffer;
     QByteArray m_stderrBuffer;
-    Tasking::TaskTreeRunner m_pidRunner;
+    Tasking::TaskTreeRunner m_taskTreeRunner;
     bool m_useCppDebugger = false;
     bool m_useLldb = false; // FIXME: Un-implemented currently.
     QmlDebug::QmlDebugServicesPreset m_qmlDebugServices;
-    Utils::Port m_localDebugServerPort; // Local end of forwarded debug socket.
     QUrl m_qmlServer;
     JDBState m_jdbState = JDBState::Idle;
-    Utils::Port m_localJdbServerPort;
     std::unique_ptr<Utils::Process> m_debugServerProcess; // gdbserver or lldb-server
     std::unique_ptr<Utils::Process> m_jdbProcess;
     QString m_deviceSerialNumber;
@@ -107,5 +98,4 @@ private:
     bool m_useAppParamsForQmlDebugger = false;
 };
 
-} // namespace Internal
-} // namespace Android
+} // namespace Android::Internal

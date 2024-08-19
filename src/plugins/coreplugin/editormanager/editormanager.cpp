@@ -208,7 +208,7 @@ void EditorManagerPlaceHolder::showEvent(QShowEvent *)
 */
 
 /*!
-    \enum EditorManager::OpenEditorFlag
+    \enum Core::EditorManager::OpenEditorFlag
 
     This enum specifies settings for opening a file in an editor.
 
@@ -396,6 +396,25 @@ EditorManagerPrivate::~EditorManagerPrivate()
     d = nullptr;
 }
 
+static void openDocumentByIdx(int idx)
+{
+    DocumentModel::Entry *entry = DocumentModel::entryAtRow(idx + 1);
+    if (!entry)
+        return;
+    EditorManager::activateEditorForEntry(entry);
+};
+
+static void openDocumentByDelta(int delta)
+{
+    const int count = DocumentModel::entryCount();
+    const std::optional<int> curIdx = DocumentModel::indexOfDocument(
+        EditorManager::currentDocument());
+    if (!curIdx)
+        return;
+    const int newIdx = (*curIdx + delta + count) % count;
+    openDocumentByIdx(newIdx);
+};
+
 void EditorManagerPrivate::init()
 {
     DocumentModel::init();
@@ -539,12 +558,12 @@ void EditorManagerPrivate::init()
             this, &EditorManagerPrivate::closeAllEditorsExceptVisible);
 
     connect(m_openGraphicalShellContextAction, &QAction::triggered, this, [this] {
-        if (!m_contextMenuEntry || m_contextMenuEntry->filePath().isEmpty())
+        if (!m_contextMenuDocument || m_contextMenuEntry->filePath().isEmpty())
             return;
         FileUtils::showInGraphicalShell(ICore::dialogParent(), m_contextMenuEntry->filePath());
     });
     connect(m_showInFileSystemViewContextAction, &QAction::triggered, this, [this] {
-        if (!m_contextMenuEntry || m_contextMenuEntry->filePath().isEmpty())
+        if (!m_contextMenuDocument || m_contextMenuEntry->filePath().isEmpty())
             return;
         FileUtils::showInFileSystemView(m_contextMenuEntry->filePath());
     });
@@ -552,7 +571,7 @@ void EditorManagerPrivate::init()
     connect(m_findInDirectoryAction, &QAction::triggered,
             this, &EditorManagerPrivate::findInDirectory);
     connect(m_filePropertiesAction, &QAction::triggered, this, [this] {
-        if (!m_contextMenuEntry || m_contextMenuEntry->filePath().isEmpty())
+        if (!m_contextMenuDocument || m_contextMenuEntry->filePath().isEmpty())
             return;
         DocumentManager::showFilePropertiesDialog(m_contextMenuEntry->filePath());
     });
@@ -595,6 +614,22 @@ void EditorManagerPrivate::init()
     goForward.setDefaultKeySequence(::Core::Tr::tr("Ctrl+Alt+Right"), ::Core::Tr::tr("Alt+Right"));
     goForward.addToContainer(Constants::M_WINDOW, Constants::G_WINDOW_NAVIGATE);
     goForward.addOnTriggered(this, &EditorManager::goForwardInNavigationHistory);
+
+    ActionBuilder openPreviousDocument(this, Constants::OPEN_PREVIOUS_DOCUMENT);
+    openPreviousDocument.setIcon(Utils::Icons::PREV.icon());
+    openPreviousDocument.setText(::Core::Tr::tr("Open Previous Document"));
+    openPreviousDocument.bindContextAction(&m_prevDocAction);
+    openPreviousDocument.setContext(editDesignContext);
+    openPreviousDocument.addToContainer(Constants::M_WINDOW, Constants::G_WINDOW_NAVIGATE);
+    openPreviousDocument.addOnTriggered(this, [] { openDocumentByDelta(-1); });
+
+    ActionBuilder openNextDocument(this, Constants::OPEN_NEXT_DOCUMENT);
+    openNextDocument.setIcon(Utils::Icons::NEXT.icon());
+    openNextDocument.setText(::Core::Tr::tr("Open Next Document"));
+    openPreviousDocument.bindContextAction(&m_nextDocAction);
+    openNextDocument.setContext(editDesignContext);
+    openNextDocument.addToContainer(Constants::M_WINDOW, Constants::G_WINDOW_NAVIGATE);
+    openNextDocument.addOnTriggered(this, [] { openDocumentByDelta(1); });
 
     // Reopen last closed document
     ActionBuilder reopenLastClosedDocument(this, Constants::REOPEN_CLOSED_EDITOR);
@@ -1385,6 +1420,8 @@ IEditor *EditorManagerPrivate::placeEditor(EditorView *view, IEditor *editor)
     if (IEditor *e = view->editorForDocument(editor->document()))
         return e;
 
+    QTC_CHECK(DocumentModel::editorsForDocument(editor->document()).contains(editor));
+
     const QByteArray state = editor->saveState();
     if (EditorView *sourceView = viewForEditor(editor)) {
         // try duplication or pull editor over to new view
@@ -1661,11 +1698,6 @@ bool EditorManagerPrivate::closeEditors(const QList<IEditor*> &editors, CloseFla
         setCurrentView(currentView);
 
     qDeleteAll(acceptedEditors);
-
-    if (!EditorManager::currentEditor()) {
-        emit m_instance->currentEditorChanged(nullptr);
-        updateActions();
-    }
 
     return !closingFailed;
 }
@@ -2083,6 +2115,8 @@ void EditorManagerPrivate::updateActions()
     EditorView *view  = currentEditorView();
     d->m_goBackAction->setEnabled(view ? view->canGoBack() : false);
     d->m_goForwardAction->setEnabled(view ? view->canGoForward() : false);
+    d->m_nextDocAction->setEnabled(DocumentModel::entryCount() > 1);
+    d->m_prevDocAction->setEnabled(DocumentModel::entryCount() > 1);
     d->m_reopenLastClosedDocumenAction->setEnabled(view ? view->canReopen() : false);
 
     SplitterOrView *viewParent = (view ? view->parentSplitterOrView() : nullptr);
@@ -2402,14 +2436,14 @@ void EditorManagerPrivate::handleContextChange(const QList<IContext *> &context)
 
 void EditorManagerPrivate::copyFilePathFromContextMenu()
 {
-    if (!d->m_contextMenuEntry)
+    if (!d->m_contextMenuDocument)
         return;
     setClipboardAndSelection(d->m_contextMenuEntry->filePath().toUserOutput());
 }
 
 void EditorManagerPrivate::copyLocationFromContextMenu()
 {
-    if (!d->m_contextMenuEntry)
+    if (!d->m_contextMenuDocument)
         return;
     const QString text = d->m_contextMenuEntry->filePath().toUserOutput()
             + QLatin1Char(':') + m_copyLocationContextAction->data().toString();
@@ -2418,28 +2452,28 @@ void EditorManagerPrivate::copyLocationFromContextMenu()
 
 void EditorManagerPrivate::copyFileNameFromContextMenu()
 {
-    if (!d->m_contextMenuEntry)
+    if (!d->m_contextMenuDocument)
         return;
     setClipboardAndSelection(d->m_contextMenuEntry->filePath().fileName());
 }
 
 void EditorManagerPrivate::saveDocumentFromContextMenu()
 {
-    IDocument *document = d->m_contextMenuEntry ? d->m_contextMenuEntry->document : nullptr;
+    IDocument *document = d->m_contextMenuDocument.get();
     if (document)
         saveDocument(document);
 }
 
 void EditorManagerPrivate::saveDocumentAsFromContextMenu()
 {
-    IDocument *document = d->m_contextMenuEntry ? d->m_contextMenuEntry->document : nullptr;
+    IDocument *document = d->m_contextMenuDocument.get();
     if (document)
         saveDocumentAs(document);
 }
 
 void EditorManagerPrivate::revertToSavedFromContextMenu()
 {
-    IDocument *document = d->m_contextMenuEntry ? d->m_contextMenuEntry->document : nullptr;
+    IDocument *document = d->m_contextMenuDocument.get();
     if (document)
         revertToSaved(document);
 }
@@ -2449,7 +2483,7 @@ void EditorManagerPrivate::closeEditorFromContextMenu()
     if (d->m_contextMenuEditor) {
         closeEditorOrDocument(d->m_contextMenuEditor);
     } else {
-        IDocument *document = d->m_contextMenuEntry ? d->m_contextMenuEntry->document : nullptr;
+        IDocument *document = d->m_contextMenuDocument.get();
         if (document)
             EditorManager::closeDocuments({document});
     }
@@ -2457,7 +2491,7 @@ void EditorManagerPrivate::closeEditorFromContextMenu()
 
 void EditorManagerPrivate::closeOtherDocumentsFromContextMenu()
 {
-    IDocument *document = d->m_contextMenuEntry ? d->m_contextMenuEntry->document : nullptr;
+    IDocument *document = d->m_contextMenuDocument.get();
     EditorManager::closeOtherDocuments(document);
 }
 
@@ -2613,14 +2647,14 @@ void EditorManagerPrivate::autoSuspendDocuments()
 
 void EditorManagerPrivate::openTerminal()
 {
-    if (!d->m_contextMenuEntry || d->m_contextMenuEntry->filePath().isEmpty())
+    if (!d->m_contextMenuDocument || d->m_contextMenuEntry->filePath().isEmpty())
         return;
     FileUtils::openTerminal(d->m_contextMenuEntry->filePath().parentDir(), {});
 }
 
 void EditorManagerPrivate::findInDirectory()
 {
-    if (!d->m_contextMenuEntry || d->m_contextMenuEntry->filePath().isEmpty())
+    if (!d->m_contextMenuDocument || d->m_contextMenuEntry->filePath().isEmpty())
         return;
     const FilePath path = d->m_contextMenuEntry->filePath();
     emit m_instance->findOnFileSystemRequest(
@@ -2629,7 +2663,7 @@ void EditorManagerPrivate::findInDirectory()
 
 void EditorManagerPrivate::togglePinned()
 {
-    if (!d->m_contextMenuEntry || d->m_contextMenuEntry->filePath().isEmpty())
+    if (!d->m_contextMenuDocument || d->m_contextMenuEntry->filePath().isEmpty())
         return;
 
     const bool currentlyPinned = d->m_contextMenuEntry->pinned;
@@ -2832,6 +2866,7 @@ void EditorManager::addSaveAndCloseEditorActions(QMenu *contextMenu, DocumentMod
 {
     QTC_ASSERT(contextMenu, return);
     d->m_contextMenuEntry = entry;
+    d->m_contextMenuDocument = entry ? entry->document : nullptr;
     d->m_contextMenuEditor = editor;
 
     const FilePath filePath = entry ? entry->filePath() : FilePath();
@@ -2911,6 +2946,7 @@ void EditorManager::addNativeDirAndOpenWithActions(QMenu *contextMenu, DocumentM
 {
     QTC_ASSERT(contextMenu, return);
     d->m_contextMenuEntry = entry;
+    d->m_contextMenuDocument = entry ? entry->document : nullptr;
     bool enabled = entry && !entry->filePath().isEmpty();
     d->m_openGraphicalShellContextAction->setEnabled(enabled);
     d->m_showInFileSystemViewContextAction->setEnabled(enabled);
@@ -2926,6 +2962,16 @@ void EditorManager::addNativeDirAndOpenWithActions(QMenu *contextMenu, DocumentM
     openWith->setEnabled(enabled);
     if (enabled)
         populateOpenWithMenu(openWith, entry->filePath());
+}
+
+void EditorManager::addContextMenuActions(
+    QMenu *contextMenu, DocumentModel::Entry *entry, IEditor *editor)
+{
+    EditorManager::addSaveAndCloseEditorActions(contextMenu, entry, editor);
+    contextMenu->addSeparator();
+    EditorManager::addPinEditorActions(contextMenu, entry);
+    contextMenu->addSeparator();
+    EditorManager::addNativeDirAndOpenWithActions(contextMenu, entry);
 }
 
 /*!
@@ -3105,6 +3151,17 @@ IEditor *EditorManager::activateEditorForDocument(IDocument *document, OpenEdito
     return EditorManagerPrivate::activateEditorForDocument(EditorManagerPrivate::currentEditorView(),
                                                            document,
                                                            flags);
+}
+
+/*!
+    Makes an IEditor instance \a editor known to the EditorManager that it did
+    not know before, and activates it using \a flags.
+*/
+void EditorManager::addEditor(IEditor *editor, OpenEditorFlags flags)
+{
+    QTC_ASSERT(!DocumentModel::editorsForDocument(editor->document()).contains(editor), return);
+    d->addEditor(editor);
+    activateEditor(editor, flags);
 }
 
 /*!
@@ -3586,6 +3643,66 @@ QByteArray EditorManager::saveState()
     return bytes;
 }
 
+class FileStateEntry
+{
+public:
+    QString filePath;
+    QString displayName;
+    Id id;
+    bool pinned = false;
+};
+
+/*
+    Calls the "handler"s with the extracted data.
+    If the fileHandler returns false, the parsing is aborted.
+*/
+static void restore(
+    const QByteArray &state,
+    const std::function<void(QMap<QString, QVariant>)> &editorStatesHandler,
+    const std::function<bool(FileStateEntry)> &fileHandler,
+    const std::function<void(QByteArray)> &splitterStateHandler,
+    const std::function<void(QVector<QVariantHash>)> &windowStateHandler)
+{
+    QDataStream stream(state);
+    QByteArray version;
+    stream >> version;
+    const bool isVersion5 = version == "EditorManagerV5";
+    if (version != "EditorManagerV4" && !isVersion5)
+        return;
+
+    QMap<QString, QVariant> editorStates;
+    stream >> editorStates;
+    if (editorStatesHandler)
+        editorStatesHandler(editorStates);
+
+    int editorCount = 0;
+    stream >> editorCount;
+    while (--editorCount >= 0) {
+        FileStateEntry file;
+        stream >> file.filePath;
+        stream >> file.displayName;
+        stream >> file.id;
+        if (isVersion5)
+            stream >> file.pinned;
+
+        if (fileHandler && !fileHandler(file))
+            return;
+    }
+
+    QByteArray splitterstates;
+    stream >> splitterstates;
+    if (splitterStateHandler)
+        splitterStateHandler(splitterstates);
+
+    if (!stream.atEnd()) { // safety for settings from Qt Creator 4.5 and earlier
+        // restore windows
+        QVector<QVariantHash> windowStates;
+        stream >> windowStates;
+        if (windowStateHandler)
+            windowStateHandler(windowStates);
+    }
+}
+
 /*!
     \internal
 
@@ -3595,7 +3712,7 @@ QByteArray EditorManager::saveState()
 
     \sa saveState()
 */
-bool EditorManager::restoreState(const QByteArray &state)
+void EditorManager::restoreState(const QByteArray &state)
 {
     closeAllEditors(true);
     // remove extra windows
@@ -3603,62 +3720,39 @@ bool EditorManager::restoreState(const QByteArray &state)
         delete d->m_editorAreas.at(i); // automatically removes it from list
     if (d->m_editorAreas.first()->isSplitter())
         EditorManagerPrivate::removeAllSplits();
-    QDataStream stream(state);
-
-    QByteArray version;
-    stream >> version;
-
-    const bool isVersion5 = version == "EditorManagerV5";
-    if (version != "EditorManagerV4" && !isVersion5)
-        return false;
 
     QApplication::setOverrideCursor(Qt::WaitCursor);
 
-    stream >> d->m_editorStates;
-
-    int editorCount = 0;
-    stream >> editorCount;
-    while (--editorCount >= 0) {
-        QString fileName;
-        stream >> fileName;
-        QString displayName;
-        stream >> displayName;
-        Id id;
-        stream >> id;
-        bool pinned = false;
-        if (isVersion5)
-            stream >> pinned;
-
-        if (!fileName.isEmpty() && !displayName.isEmpty()) {
-            const FilePath filePath = FilePath::fromUserInput(fileName);
+    const auto setEditorStates = [](const QMap<QString, QVariant> &s) { d->m_editorStates = s; };
+    const auto openFile = [](const FileStateEntry &file) {
+        if (!file.filePath.isEmpty() && !file.displayName.isEmpty()) {
+            const FilePath filePath = FilePath::fromUserInput(file.filePath);
             if (!filePath.exists())
-                continue;
+                return true;
             const FilePath rfp = autoSaveName(filePath);
             if (rfp.exists() && filePath.lastModified() < rfp.lastModified()) {
-                if (IEditor *editor = openEditor(filePath, id, DoNotMakeVisible))
-                    DocumentModelPrivate::setPinned(DocumentModel::entryForDocument(editor->document()), pinned);
+                if (IEditor *editor = openEditor(filePath, file.id, DoNotMakeVisible))
+                    DocumentModelPrivate::setPinned(
+                        DocumentModel::entryForDocument(editor->document()), file.pinned);
             } else {
-                 if (DocumentModel::Entry *entry = DocumentModelPrivate::addSuspendedDocument(
-                        filePath, displayName, id))
-                     DocumentModelPrivate::setPinned(entry, pinned);
+                if (DocumentModel::Entry *entry
+                    = DocumentModelPrivate::addSuspendedDocument(filePath, file.displayName, file.id))
+                    DocumentModelPrivate::setPinned(entry, file.pinned);
             }
         }
-    }
-
-    QByteArray splitterstates;
-    stream >> splitterstates;
-    d->m_editorAreas.first()->restoreState(splitterstates); // TODO
-
-    if (!stream.atEnd()) { // safety for settings from Qt Creator 4.5 and earlier
-        // restore windows
-        QVector<QVariantHash> windowStates;
-        stream >> windowStates;
-        for (const QVariantHash &windowState : std::as_const(windowStates)) {
+        return true;
+    };
+    const auto restoreSplitterState = [](const QByteArray &state) {
+        d->m_editorAreas.first()->restoreState(state);
+    };
+    const auto restoreWindows = [](const QVector<QVariantHash> &states) {
+        for (const QVariantHash &windowState : std::as_const(states)) {
             EditorWindow *window = d->createEditorWindow();
             window->restoreState(windowState);
             window->show();
         }
-    }
+    };
+    restore(state, setEditorStates, openFile, restoreSplitterState, restoreWindows);
 
     // splitting and stuff results in focus trouble, that's why we set the focus again after restoration
     if (d->m_currentEditor) {
@@ -3671,8 +3765,21 @@ bool EditorManager::restoreState(const QByteArray &state)
     }
 
     QApplication::restoreOverrideCursor();
+}
 
-    return true;
+FilePaths EditorManagerPrivate::openFilesForState(const QByteArray &state, int max)
+{
+    FilePaths result;
+    restore(
+        state,
+        {},
+        [&result, max](const FileStateEntry &entry) {
+            result << FilePath::fromUserInput(entry.filePath);
+            return max < 0 || result.size() <= max;
+        },
+        {},
+        {});
+    return result;
 }
 
 /*!

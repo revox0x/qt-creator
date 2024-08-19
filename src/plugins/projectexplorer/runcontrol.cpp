@@ -3,6 +3,7 @@
 
 #include "runcontrol.h"
 
+#include "appoutputpane.h"
 #include "buildconfiguration.h"
 #include "customparser.h"
 #include "devicesupport/devicemanager.h"
@@ -362,6 +363,12 @@ void RunControl::copyDataFromRunControl(RunControl *runControl)
 {
     QTC_ASSERT(runControl, return);
     d->copyData(runControl->d.get());
+}
+
+void RunControl::resetDataForAttachToCore()
+{
+    d->m_workers.clear();
+    d->state = RunControlState::Initialized;
 }
 
 void RunControl::copyDataFromRunConfiguration(RunConfiguration *runConfig)
@@ -1274,7 +1281,7 @@ public:
 
 static QProcess::ProcessChannelMode defaultProcessChannelMode()
 {
-    return ProjectExplorerPlugin::appOutputSettings().mergeChannels
+    return appOutputPane().settings().mergeChannels
             ? QProcess::MergedChannels : QProcess::SeparateChannels;
 }
 
@@ -1320,11 +1327,12 @@ void SimpleTargetRunnerPrivate::stop()
     m_resultData.m_exitStatus = QProcess::CrashExit;
 
     const bool isLocal = !m_command.executable().needsDevice();
+    const auto totalTimeout = 2 * m_process.reaperTimeout();
     if (isLocal) {
         if (!isRunning())
             return;
         m_process.stop();
-        m_process.waitForFinished();
+        m_process.waitForFinished(totalTimeout);
         QTimer::singleShot(100, this, [this] { forwardDone(); });
     } else {
         if (m_stopRequested)
@@ -1334,8 +1342,7 @@ void SimpleTargetRunnerPrivate::stop()
         switch (m_state) {
         case Run:
             m_process.stop();
-            using namespace std::chrono_literals;
-            if (!m_process.waitForFinished(2s)) { // TODO: it may freeze on some devices
+            if (!m_process.waitForFinished(totalTimeout)) {
                 q->appendMessage(Tr::tr("Remote process did not finish in time. "
                                         "Connectivity lost?"), ErrorMessageFormat);
                 m_process.close();
@@ -1444,6 +1451,7 @@ void SimpleTargetRunnerPrivate::start()
     else
         m_outputCodec = QTextCodec::codecForName("utf8");
 
+    m_process.setForceDefaultErrorModeOnWindows(true);
     m_process.start();
 }
 
@@ -1520,6 +1528,8 @@ void SimpleTargetRunner::start()
     d->m_stopReported = false;
     d->disconnect(this);
     d->m_process.setTerminalMode(useTerminal ? Utils::TerminalMode::Run : Utils::TerminalMode::Off);
+    d->m_process.setReaperTimeout(
+        std::chrono::seconds(projectExplorerSettings().reaperTimeoutInSeconds));
     d->m_runAsRoot = runAsRoot;
 
     const QString msg = Tr::tr("Starting %1...").arg(d->m_command.displayName());

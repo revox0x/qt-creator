@@ -210,11 +210,10 @@ QIcon Icon::sideBarIcon(const Icon &classic, const Icon &flat)
     return result;
 }
 
-QIcon Icon::modeIcon(const Icon &classic, const Icon &flat, const Icon &flatActive)
+QIcon Icon::modeIcon(const Icon &classic, const Icon &flat,
+                     [[maybe_unused]] const Icon &flatActive)
 {
     QIcon result = sideBarIcon(classic, flat);
-    if (creatorTheme()->flag(Theme::FlatSideBarIcons))
-        result.addPixmap(flatActive.pixmap(), QIcon::Active);
     return result;
 }
 

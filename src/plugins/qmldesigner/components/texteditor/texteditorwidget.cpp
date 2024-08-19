@@ -115,7 +115,7 @@ void TextEditorWidget::jumpToModelNode(const ModelNode &modelNode)
     if (nodeOffset > 0) {
         int line, column;
         m_textEditor->editorWidget()->convertPosition(nodeOffset, &line, &column);
-        m_textEditor->editorWidget()->gotoLine(line + 1, column);
+        m_textEditor->editorWidget()->gotoLine(line, column);
 
         highlightToModelNode(modelNode);
     }
@@ -265,7 +265,7 @@ void TextEditorWidget::dragEnterEvent(QDragEnterEvent *dragEnterEvent)
 
 void TextEditorWidget::dragMoveEvent(QDragMoveEvent *dragMoveEvent)
 {
-    QTextCursor cursor = m_textEditor->editorWidget()->cursorForPosition(dragMoveEvent->pos());
+    QTextCursor cursor = m_textEditor->editorWidget()->cursorForPosition(dragMoveEvent->position().toPoint());
     const int cursorPosition = cursor.position();
     RewriterView *rewriterView = m_textEditorView->model()->rewriterView();
 
@@ -279,7 +279,7 @@ void TextEditorWidget::dragMoveEvent(QDragMoveEvent *dragMoveEvent)
 
 void TextEditorWidget::dropEvent(QDropEvent *dropEvent)
 {
-    QTextCursor cursor = m_textEditor->editorWidget()->cursorForPosition(dropEvent->pos());
+    QTextCursor cursor = m_textEditor->editorWidget()->cursorForPosition(dropEvent->position().toPoint());
     const int cursorPosition = cursor.position();
     RewriterView *rewriterView = m_textEditorView->model()->rewriterView();
 

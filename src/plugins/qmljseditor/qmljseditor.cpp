@@ -5,7 +5,7 @@
 
 #include "qmljsautocompleter.h"
 #include "qmljscompletionassist.h"
-#include "qmljseditingsettingspage.h"
+#include "qmljseditorsettings.h"
 #include "qmljseditorconstants.h"
 #include "qmljseditordocument.h"
 #include "qmljseditorplugin.h"
@@ -24,6 +24,7 @@
 
 #include <qmljstools/qmljsindenter.h>
 #include <qmljstools/qmljstoolsconstants.h>
+
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/projectnodes.h>
@@ -88,6 +89,7 @@ const char QT_QUICK_TOOLBAR_MARKER_ID[] = "QtQuickToolbarMarkerId";
 using namespace Core;
 using namespace QmlJS;
 using namespace QmlJS::AST;
+using namespace QmlJSEditor::Internal;
 using namespace QmlJSTools;
 using namespace TextEditor;
 using namespace Utils;
@@ -97,8 +99,7 @@ namespace QmlJSEditor {
 static LanguageClient::Client *getQmllsClient(const Utils::FilePath &fileName)
 {
     // the value in disableBuiltinCodemodel is only valid when useQmlls is enabled
-    if (QmlJsEditingSettings::get().qmllsSettings().useQmlls
-        && !QmlJsEditingSettings::get().qmllsSettings().disableBuiltinCodemodel)
+    if (settings().useQmlls() && !settings().disableBuiltinCodemodel())
         return nullptr;
 
     auto client = LanguageClient::LanguageClientManager::clientForFilePath(fileName);
@@ -163,7 +164,7 @@ void QmlJSEditorWidget::restoreState(const QByteArray &state)
     using namespace Utils::Constants;
     QStringList qmlTypes = {QML_MIMETYPE, QBS_MIMETYPE, QMLTYPES_MIMETYPE, QMLUI_MIMETYPE};
 
-    if (QmlJsEditingSettings::get().foldAuxData() && qmlTypes.contains(textDocument()->mimeType())) {
+    if (settings().foldAuxData() && qmlTypes.contains(textDocument()->mimeType())) {
         int version = 0;
         QDataStream stream(state);
         stream >> version;
@@ -267,6 +268,8 @@ bool QmlJSEditorWidget::isOutlineCursorChangesBlocked()
 
 void QmlJSEditorWidget::jumpToOutlineElement(int /*index*/)
 {
+    if (!m_outlineCombo)
+        return;
     QModelIndex index = m_outlineCombo->view()->currentIndex();
     SourceLocation location = m_qmlJsEditorDocument->outlineModel()->sourceLocation(index);
 
@@ -285,6 +288,8 @@ void QmlJSEditorWidget::jumpToOutlineElement(int /*index*/)
 
 void QmlJSEditorWidget::updateOutlineIndexNow()
 {
+    if (!m_outlineCombo)
+        return;
     if (!m_qmlJsEditorDocument->outlineModel()->document())
         return;
 
@@ -570,8 +575,19 @@ void QmlJSEditorWidget::createToolBar()
 
     connect(this, &QmlJSEditorWidget::cursorPositionChanged,
             &m_updateOutlineIndexTimer, QOverload<>::of(&QTimer::start));
+    connect(this, &QmlJSEditorWidget::toolbarOutlineChanged,
+            this, &QmlJSEditorWidget::updateOutline);
 
-    insertExtraToolBarWidget(TextEditorWidget::Left, m_outlineCombo);
+    setToolbarOutline(m_outlineCombo);
+}
+
+void QmlJSEditorWidget::updateOutline(QWidget *newOutline)
+{
+    if (!newOutline) {
+        createToolBar();
+    } else if (newOutline != m_outlineCombo){
+        m_outlineCombo = nullptr;
+    }
 }
 
 class CodeModelInspector : public MemberProcessor

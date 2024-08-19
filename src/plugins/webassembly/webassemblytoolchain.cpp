@@ -13,6 +13,7 @@
 #include <projectexplorer/kitmanager.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/projectmacro.h>
+#include <projectexplorer/toolchainconfigwidget.h>
 #include <projectexplorer/toolchainmanager.h>
 
 #include <qtsupport/qtkitaspect.h>
@@ -146,17 +147,13 @@ static Toolchains doAutoDetect(const ToolchainDetector &detector)
 void registerToolChains()
 {
     // Remove old toolchains
-    for (Toolchain *tc : ToolchainManager::findToolchains(toolChainAbi())) {
-         if (tc->detection() != Toolchain::AutoDetection)
-             continue;
-         ToolchainManager::deregisterToolchain(tc);
-    };
+    const Toolchains oldToolchains = Utils::filtered(
+        ToolchainManager::findToolchains(toolChainAbi()),
+        Utils::equal(&Toolchain::detection, Toolchain::AutoDetection));
+    ToolchainManager::deregisterToolchains(oldToolchains);
 
     // Create new toolchains and register them
-    ToolchainDetector detector({}, {}, {});
-    const Toolchains toolchains = doAutoDetect(detector);
-    for (auto toolChain : toolchains)
-        ToolchainManager::registerToolchain(toolChain);
+    ToolchainManager::registerToolchains(doAutoDetect(ToolchainDetector({}, {}, {})));
 
     // Let kits pick up the new toolchains
     for (Kit *kit : KitManager::kits()) {
@@ -187,9 +184,15 @@ public:
         setUserCreatable(true);
     }
 
-    Toolchains autoDetect(const ToolchainDetector &detector) const
+    Toolchains autoDetect(const ToolchainDetector &detector) const override
     {
         return doAutoDetect(detector);
+    }
+
+    std::unique_ptr<ToolchainConfigWidget> createConfigurationWidget(
+        const ToolchainBundle &bundle) const override
+    {
+        return GccToolchain::createConfigurationWidget(bundle);
     }
 };
 

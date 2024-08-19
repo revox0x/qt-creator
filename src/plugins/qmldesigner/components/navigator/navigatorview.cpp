@@ -12,9 +12,8 @@
 #include <bindingproperty.h>
 #include <commontypecache.h>
 #include <designersettings.h>
-#include <designmodecontext.h>
 #include <itemlibraryentry.h>
-#include <model/modelutils.h>
+#include <modelutils.h>
 #include <nodeinstanceview.h>
 #include <nodelistproperty.h>
 #include <nodeproperty.h>
@@ -117,7 +116,6 @@ WidgetInfo NavigatorView::widgetInfo()
     return createWidgetInfo(m_widget.data(),
                             QStringLiteral("Navigator"),
                             WidgetInfo::LeftPane,
-                            0,
                             tr("Navigator"),
                             tr("Navigator view"));
 }
@@ -364,9 +362,14 @@ void NavigatorView::enableWidget()
         m_widget->enableNavigator();
 }
 
-void NavigatorView::modelNodePreviewPixmapChanged(const ModelNode &node, const QPixmap &pixmap)
+void NavigatorView::modelNodePreviewPixmapChanged(const ModelNode &node,
+                                                  const QPixmap &pixmap,
+                                                  const QByteArray &requestId)
 {
-    m_treeModel->updateToolTipPixmap(node, pixmap);
+    // There might be multiple requests for different preview pixmap sizes.
+    // Here only the one with the default size is picked.
+    if (requestId.isEmpty())
+        m_treeModel->updateToolTipPixmap(node, pixmap);
 }
 
 ModelNode NavigatorView::modelNodeForIndex(const QModelIndex &modelIndex) const
@@ -758,10 +761,6 @@ void NavigatorView::setupWidget()
 {
     m_widget = new NavigatorWidget(this);
     m_treeModel = new NavigatorTreeModel(this);
-
-    auto navigatorContext = new Internal::NavigatorContext(m_widget.data());
-    Core::ICore::addContextObject(navigatorContext);
-
     m_treeModel->setView(this);
     m_widget->setTreeModel(m_treeModel.data());
     m_currentModelInterface = m_treeModel;

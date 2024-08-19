@@ -137,6 +137,7 @@ public:
     // Some of them could be aggregated in another public utils class.
 
     static bool startDetached(const CommandLine &cmd, const FilePath &workingDirectory = {},
+                              DetachedChannelMode channelMode = DetachedChannelMode::Forward,
                               qint64 *pid = nullptr);
 
     // Starts the command and waits for finish.
@@ -187,6 +188,9 @@ public:
     void setCreateConsoleOnWindows(bool create);
     bool createConsoleOnWindows() const;
 
+    void setForceDefaultErrorModeOnWindows(bool force);
+    bool forceDefaultErrorModeOnWindows() const;
+
 signals:
     void starting(); // On NotRunning -> Starting state transition
     void started();  // On Starting -> Running state transition
@@ -209,7 +213,7 @@ public:
     std::function<ProcessInterface *(const FilePath &)> processImplHook;
 };
 
-class QTCREATOR_UTILS_EXPORT ProcessTaskAdapter : public Tasking::TaskAdapter<Process>
+class QTCREATOR_UTILS_EXPORT ProcessTaskAdapter final : public Tasking::TaskAdapter<Process>
 {
 public:
     ProcessTaskAdapter();

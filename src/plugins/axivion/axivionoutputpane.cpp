@@ -4,6 +4,7 @@
 #include "axivionoutputpane.h"
 
 #include "axivionplugin.h"
+#include "axivionsettings.h"
 #include "axiviontr.h"
 #include "dashboard/dto.h"
 #include "issueheaderview.h"
@@ -18,6 +19,7 @@
 #include <solutions/tasking/tasktreerunner.h>
 
 #include <utils/algorithm.h>
+#include <utils/guard.h>
 #include <utils/layoutbuilder.h>
 #include <utils/link.h>
 #include <utils/qtcassert.h>
@@ -50,6 +52,8 @@ using namespace Tasking;
 using namespace Utils;
 
 namespace Axivion::Internal {
+
+void showIssuesFromDashboard(const QString &kind); // impl at bottom
 
 class DashboardWidget : public QScrollArea
 {
@@ -133,6 +137,7 @@ void DashboardWidget::updateUi()
         return;
 
     const Dto::AnalysisVersionDto &last = info.versions.back();
+    setAnalysisVersion(last.date);
     if (last.linesOfCode.has_value())
         m_loc->setText(QString::number(last.linesOfCode.value()));
     const QDateTime timeStamp = QDateTime::fromString(last.date, Qt::ISODate);
@@ -147,14 +152,24 @@ void DashboardWidget::updateUi()
         }
         return prefix;
     };
-    auto addValuesWidgets = [this, &toolTip](const QString &issueKind, qint64 total, qint64 added, qint64 removed, int row) {
+    auto linked = [](const QString &text, const QString &href, bool link) {
+        return link ? QString("<a href='%1'>%2</a>").arg(href).arg(text)
+                    : text;
+    };
+    auto addValuesWidgets = [this, &toolTip, &linked](const QString &issueKind, qint64 total,
+            qint64 added, qint64 removed, int row, bool link) {
         const QString currentToolTip = toolTip(issueKind);
         QLabel *label = new QLabel(issueKind, this);
         label->setToolTip(currentToolTip);
         m_gridLayout->addWidget(label, row, 0);
-        label = new QLabel(QString::number(total), this);
+        label = new QLabel(linked(QString::number(total), issueKind, link), this);
         label->setToolTip(currentToolTip);
         label->setAlignment(Qt::AlignRight);
+        if (link) {
+            connect(label, &QLabel::linkActivated, this, [](const QString &issueKind) {
+                showIssuesFromDashboard(issueKind);
+            });
+        }
         m_gridLayout->addWidget(label, row, 1);
         label = new QLabel(this);
         label->setPixmap(trendIcon(added, removed));
@@ -190,12 +205,12 @@ void DashboardWidget::updateUi()
                 allAdded += added;
                 qint64 removed = extract_value(counts, QStringLiteral("Removed"));
                 allRemoved += removed;
-                addValuesWidgets(issueCount.first, total, added, removed, row);
+                addValuesWidgets(issueCount.first, total, added, removed, row, true);
                 ++row;
             }
         }
     }
-    addValuesWidgets(Tr::tr("Total:"), allTotal, allAdded, allRemoved, row);
+    addValuesWidgets(Tr::tr("Total:"), allTotal, allAdded, allRemoved, row, false);
 }
 
 struct LinkWithColumns
@@ -263,7 +278,7 @@ class IssuesWidget : public QScrollArea
 {
 public:
     explicit IssuesWidget(QWidget *parent = nullptr);
-    void updateUi();
+    void updateUi(const QString &kind);
 
     const std::optional<Dto::TableInfoDto> currentTableInfo() const { return m_currentTableInfo; }
     IssueListSearch searchFromUi() const;
@@ -289,6 +304,7 @@ private:
     QComboBox *m_ownerFilter = nullptr;
     QComboBox *m_versionStart = nullptr;
     QComboBox *m_versionEnd = nullptr;
+    Guard m_signalBlocker;
     QLineEdit *m_pathGlobFilter = nullptr; // FancyLineEdit instead?
     QLabel *m_totalRows = nullptr;
     BaseTreeView *m_issuesView = nullptr;
@@ -315,11 +331,22 @@ IssuesWidget::IssuesWidget(QWidget *parent)
 
     m_versionStart = new QComboBox(this);
     m_versionStart->setMinimumContentsLength(25);
-    connect(m_versionStart, &QComboBox::activated, this, &IssuesWidget::onSearchParameterChanged);
+    connect(m_versionStart, &QComboBox::currentIndexChanged, this, [this](int index) {
+        if (m_signalBlocker.isLocked())
+            return;
+        QTC_ASSERT(index > -1 && index < m_versionDates.size(), return);
+        onSearchParameterChanged();
+    });
 
     m_versionEnd = new QComboBox(this);
     m_versionEnd->setMinimumContentsLength(25);
-    connect(m_versionEnd, &QComboBox::activated, this, &IssuesWidget::onSearchParameterChanged);
+    connect(m_versionEnd, &QComboBox::currentIndexChanged, this, [this](int index) {
+        if (m_signalBlocker.isLocked())
+            return;
+        QTC_ASSERT(index > -1 && index < m_versionDates.size(), return);
+        onSearchParameterChanged();
+        setAnalysisVersion(m_versionDates.at(index));
+    });
 
     m_addedFilter = new QPushButton(this);
     m_addedFilter->setIcon(trendIcon(1, 0));
@@ -344,7 +371,12 @@ IssuesWidget::IssuesWidget(QWidget *parent)
     m_ownerFilter = new QComboBox(this);
     m_ownerFilter->setToolTip(Tr::tr("Owner"));
     m_ownerFilter->setMinimumContentsLength(25);
-    connect(m_ownerFilter, &QComboBox::activated, this, &IssuesWidget::onSearchParameterChanged);
+    connect(m_ownerFilter, &QComboBox::currentIndexChanged, this, [this](int index) {
+        if (m_signalBlocker.isLocked())
+            return;
+        QTC_ASSERT(index > -1 && index < m_userNames.size(), return);
+        onSearchParameterChanged();
+    });
 
     m_pathGlobFilter = new QLineEdit(this);
     m_pathGlobFilter->setPlaceholderText(Tr::tr("Path globbing"));
@@ -378,7 +410,7 @@ IssuesWidget::IssuesWidget(QWidget *parent)
     setWidgetResizable(true);
 }
 
-void IssuesWidget::updateUi()
+void IssuesWidget::updateUi(const QString &kind)
 {
     setFiltersEnabled(false);
     const std::optional<Dto::ProjectInfoDto> projectInfo = Internal::projectInfo();
@@ -392,11 +424,30 @@ void IssuesWidget::updateUi()
 
     setFiltersEnabled(true);
     // avoid refetching existing data
-    if (!m_currentPrefix.isEmpty() || m_issuesModel->rowCount())
+    if (kind.isEmpty() && (!m_currentPrefix.isEmpty() || m_issuesModel->rowCount()))
         return;
 
-    if (info.issueKinds.size())
-        m_currentPrefix = info.issueKinds.front().prefix;
+    if (!kind.isEmpty()) {
+        const int index
+                = Utils::indexOf( info.issueKinds, [kind](const Dto::IssueKindInfoDto &dto) {
+            return dto.prefix == kind; });
+        if (index != -1) {
+            m_currentPrefix = kind;
+            auto kindButton = m_typesButtonGroup->button(index + 1);
+            if (QTC_GUARD(kindButton))
+                kindButton->setChecked(true);
+            // reset filters - if kind is not empty we get triggered from dashboard overview
+            if (!m_userNames.isEmpty())
+                m_ownerFilter->setCurrentIndex(0);
+            m_pathGlobFilter->clear();
+            if (m_versionDates.size() > 1) {
+                m_versionStart->setCurrentIndex(m_versionDates.count() - 1);
+                m_versionEnd->setCurrentIndex(0);
+            }
+        }
+    }
+    if (m_currentPrefix.isEmpty())
+        m_currentPrefix = info.issueKinds.size() ? info.issueKinds.front().prefix : QString{};
     fetchTable();
 }
 
@@ -418,15 +469,17 @@ void IssuesWidget::updateTable()
 
     QStringList columnHeaders;
     QStringList hiddenColumns;
-    QList<bool> sortableColumns;
-    QList<int> columnWidths;
+    QList<IssueHeaderView::ColumnInfo> columnInfos;
     QList<Qt::Alignment> alignments;
     for (const Dto::ColumnInfoDto &column : m_currentTableInfo->columns) {
         columnHeaders << column.header.value_or(column.key);
         if (!column.showByDefault)
             hiddenColumns << column.key;
-        sortableColumns << column.canSort;
-        columnWidths << column.width;
+        IssueHeaderView::ColumnInfo info;
+        info.sortable = column.canSort;
+        info.filterable = column.canFilter;
+        info.width = column.width;
+        columnInfos.append(info);
         alignments << alignmentFromString(column.alignment);
     }
     m_addedFilter->setText("0");
@@ -436,8 +489,7 @@ void IssuesWidget::updateTable()
     m_issuesModel->clear();
     m_issuesModel->setHeader(columnHeaders);
     m_issuesModel->setAlignments(alignments);
-    m_headerView->setSortableColumns(sortableColumns);
-    m_headerView->setColumnWidths(columnWidths);
+    m_headerView->setColumnInfoList(columnInfos);
     int counter = 0;
     for (const QString &header : std::as_const(columnHeaders))
         m_issuesView->setColumnHidden(counter++, hiddenColumns.contains(header));
@@ -463,7 +515,7 @@ static QList<LinkWithColumns> linksForIssue(const std::map<QString, Dto::Any> &i
             const QString &line) {
         QList<int> columns;
         auto it = issueRow.find(path);
-        if (it != end) {
+        if (it != end && !it->second.isNull()) {
             Link link{ FilePath::fromUserInput(it->second.getString()) };
             columns.append(findColumn(it->first));
             it = issueRow.find(line);
@@ -604,7 +656,9 @@ void IssuesWidget::updateBasicProjectInfo(const std::optional<Dto::ProjectInfoDt
         userDisplayNames.append(user.displayName);
         m_userNames.append(user.name);
     }
+    m_signalBlocker.lock();
     m_ownerFilter->addItems(userDisplayNames);
+    m_signalBlocker.unlock();
 
     m_versionDates.clear();
     m_versionStart->clear();
@@ -616,9 +670,11 @@ void IssuesWidget::updateBasicProjectInfo(const std::optional<Dto::ProjectInfoDt
         versionLabels.append(version.label.value_or(version.name));
         m_versionDates.append(version.date);
     }
+    m_signalBlocker.lock();
     m_versionStart->addItems(versionLabels);
     m_versionEnd->addItems(versionLabels);
     m_versionStart->setCurrentIndex(m_versionDates.count() - 1);
+    m_signalBlocker.unlock();
 }
 
 void IssuesWidget::setFiltersEnabled(bool enabled)
@@ -646,13 +702,18 @@ IssueListSearch IssuesWidget::searchFromUi() const
         search.state = "added";
     else if (m_removedFilter->isChecked())
         search.state = "removed";
-    if (int column = m_headerView->currentSortColumn() != -1) {
-        QTC_ASSERT(m_currentTableInfo, return search);
-        QTC_ASSERT((ulong)column < m_currentTableInfo->columns.size(), return search);
-        search.sort = m_currentTableInfo->columns.at(m_headerView->currentSortColumn()).key
-                + (m_headerView->currentSortOrder() == SortOrder::Ascending ? " asc" : " desc");
-    }
 
+    QTC_ASSERT(m_currentTableInfo, return search);
+    QString sort;
+    const QList<QPair<int, Qt::SortOrder>> currentSortColumns = m_headerView->currentSortColumns();
+    for (const auto &pair : currentSortColumns) {
+        QTC_ASSERT((ulong)pair.first < m_currentTableInfo->columns.size(), return search);
+        if (!sort.isEmpty())
+            sort.append(',');
+        sort.append(m_currentTableInfo->columns.at(pair.first).key
+                    + (pair.second == Qt::AscendingOrder ? " asc" : " desc"));
+    }
+    search.sort = sort;
     return search;
 }
 
@@ -767,12 +828,7 @@ public:
         m_showIssues->setIcon(Icons::ZOOM_TOOLBAR.icon());
         m_showIssues->setToolTip(Tr::tr("Search for issues"));
         m_showIssues->setCheckable(true);
-        connect(m_showIssues, &QToolButton::clicked, this, [this] {
-            QTC_ASSERT(m_outputWidget, return);
-            m_outputWidget->setCurrentIndex(1);
-            if (auto issues = static_cast<IssuesWidget *>(m_outputWidget->widget(1)))
-                issues->updateUi();
-        });
+        connect(m_showIssues, &QToolButton::clicked, this, [this] { handleShowIssues({}); });
         auto *butonGroup = new QButtonGroup(this);
         butonGroup->addButton(m_showDashboard);
         butonGroup->addButton(m_showIssues);
@@ -781,6 +837,18 @@ public:
         connect(m_outputWidget, &QStackedWidget::currentChanged, this, [this](int idx) {
             m_showDashboard->setChecked(idx == 0);
             m_showIssues->setChecked(idx == 1);
+        });
+
+        m_toggleIssues = new QToolButton(m_outputWidget);
+        m_toggleIssues->setIcon(Utils::Icons::WARNING_TOOLBAR.icon());
+        m_toggleIssues->setToolTip(Tr::tr("Show issue markers inline"));
+        m_toggleIssues->setCheckable(true);
+        m_toggleIssues->setChecked(settings().highlightMarks());
+        connect(m_toggleIssues, &QToolButton::toggled, this, [](bool checked) {
+            settings().highlightMarks.setValue(checked);
+        });
+        connect(&settings().highlightMarks, &BaseAspect::changed, this, [this] {
+            m_toggleIssues->setChecked(settings().highlightMarks());
         });
     }
 
@@ -801,7 +869,7 @@ public:
 
     QList<QWidget *> toolBarWidgets() const final
     {
-        return {m_showDashboard, m_showIssues};
+        return {m_showDashboard, m_showIssues, m_toggleIssues};
     }
 
     void clearContents() final {}
@@ -813,6 +881,14 @@ public:
     bool canPrevious() const final { return false; }
     void goToNext() final {}
     void goToPrev() final {}
+
+    void handleShowIssues(const QString &kind)
+    {
+        QTC_ASSERT(m_outputWidget, return);
+        m_outputWidget->setCurrentIndex(1);
+        if (auto issues = static_cast<IssuesWidget *>(m_outputWidget->widget(1)))
+            issues->updateUi(kind);
+    }
 
     void updateDashboard()
     {
@@ -845,17 +921,17 @@ public:
         dashboardUrl.setQuery(search.toUrlQuery(QueryMode::FilterQuery));
 
         QMenu *menu = new QMenu;
-        auto action = new QAction(Tr::tr("Open issue in Dashboard"), menu);
+        auto action = new QAction(Tr::tr("Open Issue in Dashboard"), menu);
         menu->addAction(action);
         QObject::connect(action, &QAction::triggered, menu, [issueBaseUrl] {
             QDesktopServices::openUrl(issueBaseUrl);
         });
-        action = new QAction(Tr::tr("Open table in Dashboard"), menu);
+        action = new QAction(Tr::tr("Open Table in Dashboard"), menu);
         QObject::connect(action, &QAction::triggered, menu, [dashboardUrl] {
             QDesktopServices::openUrl(dashboardUrl);
         });
         menu->addAction(action);
-        action = new QAction(Tr::tr("Copy Dashboard link to clipboard"), menu);
+        action = new QAction(Tr::tr("Copy Dashboard Link to Clipboard"), menu);
         QObject::connect(action, &QAction::triggered, menu, [dashboardUrl] {
             if (auto clipboard = QGuiApplication::clipboard())
                 clipboard->setText(dashboardUrl.toString());
@@ -870,6 +946,7 @@ private:
     QStackedWidget *m_outputWidget = nullptr;
     QToolButton *m_showDashboard = nullptr;
     QToolButton *m_showIssues = nullptr;
+    QToolButton *m_toggleIssues = nullptr;
 };
 
 
@@ -895,6 +972,12 @@ static bool issueListContextMenuEvent(const ItemViewEvent &ev)
         return false;
     const QString issue = first.data().toString();
     return theAxivionOutputPane->handleContextMenu(issue, ev);
+}
+
+void showIssuesFromDashboard(const QString &kind)
+{
+    QTC_ASSERT(theAxivionOutputPane, return);
+    theAxivionOutputPane->handleShowIssues(kind);
 }
 
 } // Axivion::Internal

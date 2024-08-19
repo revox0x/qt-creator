@@ -7,6 +7,7 @@
 #include "remotelinux_constants.h"
 #include "remotelinuxtr.h"
 
+#include <projectexplorer/buildstep.h>
 #include <projectexplorer/buildsystem.h>
 #include <projectexplorer/deploymentdata.h>
 #include <projectexplorer/devicesupport/devicemanager.h>
@@ -28,9 +29,9 @@ using namespace Utils;
 
 namespace RemoteLinux::Internal {
 
-// RsyncDeployStep
+// GenericDeployStep
 
-class GenericDeployStep : public AbstractRemoteLinuxDeployStep
+class GenericDeployStep final : public AbstractRemoteLinuxDeployStep
 {
 public:
     GenericDeployStep(BuildStepList *bsl, Id id)
@@ -176,12 +177,16 @@ GroupItem GenericDeployStep::transferTask(const Storage<FilesToTransfer> &storag
     const auto onError = [this](const FileTransfer &transfer) {
         const ProcessResultData result = transfer.resultData();
         if (result.m_error == QProcess::FailedToStart) {
-            addErrorMessage(Tr::tr("rsync failed to start: %1").arg(result.m_errorString));
+            addErrorMessage(Tr::tr("%1 failed to start: %2")
+                                .arg(transfer.transferMethodName(), result.m_errorString));
         } else if (result.m_exitStatus == QProcess::CrashExit) {
-            addErrorMessage(Tr::tr("rsync crashed."));
+            addErrorMessage(Tr::tr("%1 crashed.").arg(transfer.transferMethodName()));
         } else if (result.m_exitCode != 0) {
-            addErrorMessage(Tr::tr("rsync failed with exit code %1.").arg(result.m_exitCode)
-                            + "\n" + result.m_errorString);
+            addErrorMessage(
+                Tr::tr("%1 failed with exit code %2.")
+                    .arg(transfer.transferMethodName())
+                    .arg(result.m_exitCode)
+                + "\n" + result.m_errorString);
         }
     };
     return FileTransferTask(onSetup, onError, CallDoneIf::Error);
@@ -219,10 +224,21 @@ GroupItem GenericDeployStep::deployRecipe()
 
 // Factory
 
-GenericDeployStepFactory::GenericDeployStepFactory()
+class GenericDeployStepFactory final : public BuildStepFactory
 {
-    registerStep<GenericDeployStep>(Constants::GenericDeployStepId);
-    setDisplayName(Tr::tr("Deploy files"));
+public:
+    GenericDeployStepFactory()
+    {
+        registerStep<GenericDeployStep>(Constants::GenericDeployStepId);
+        setDisplayName(Tr::tr("Deploy files"));
+        setSupportedStepList(ProjectExplorer::Constants::BUILDSTEPS_DEPLOY);
+        setSupportedDeviceType(RemoteLinux::Constants::GenericLinuxOsType);
+    }
+};
+
+void setupGenericDeployStep()
+{
+    static GenericDeployStepFactory theGenericDeployStepFactory;
 }
 
 } // RemoteLinux::Internal

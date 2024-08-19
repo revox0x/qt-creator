@@ -9,7 +9,6 @@
 #include "designeractionmanager.h"
 #include "designericons.h"
 #include "designersettings.h"
-#include "designmodecontext.h"
 #include "edit3dcanvas.h"
 #include "edit3dviewconfig.h"
 #include "edit3dwidget.h"
@@ -27,7 +26,7 @@
 #include "variantproperty.h"
 
 #include <auxiliarydataproperties.h>
-#include <model/modelutils.h>
+#include <modelutils.h>
 #include <utils3d.h>
 
 #include <coreplugin/icore.h>
@@ -42,7 +41,6 @@
 #include <utils/qtcassert.h>
 #include <utils/stylehelper.h>
 #include <utils/utilsicons.h>
-
 #include <QToolButton>
 
 namespace QmlDesigner {
@@ -72,9 +70,6 @@ void Edit3DView::createEdit3DWidget()
 {
     createEdit3DActions();
     m_edit3DWidget = new Edit3DWidget(this);
-
-    auto editor3DContext = new Internal::Editor3DContext(m_edit3DWidget.data());
-    Core::ICore::addContextObject(editor3DContext);
 }
 
 void Edit3DView::checkImports()
@@ -90,7 +85,6 @@ WidgetInfo Edit3DView::widgetInfo()
     return createWidgetInfo(m_edit3DWidget.data(),
                             "Editor3D",
                             WidgetInfo::CentralPane,
-                            0,
                             tr("3D"),
                             tr("3D view"),
                             DesignerWidgetFlags::IgnoreErrors);
@@ -697,7 +691,7 @@ void Edit3DView::createSeekerSliderAction()
 QPoint Edit3DView::resolveToolbarPopupPos(Edit3DAction *action) const
 {
     QPoint pos;
-    const QList<QObject *> &objects = action->action()->associatedObjects();
+    const QObjectList &objects = action->action()->associatedObjects();
     for (QObject *obj : objects) {
         if (auto button = qobject_cast<QToolButton *>(obj)) {
             if (auto toolBar = qobject_cast<QWidget *>(button->parent())) {
@@ -1310,22 +1304,25 @@ void Edit3DView::createEdit3DActions()
                     this, [this] {
                         setCameraSpeedAuxData(m_cameraSpeedConfiguration->speed(),
                                               m_cameraSpeedConfiguration->multiplier());
-            });
+                    });
+            connect(m_cameraSpeedConfiguration.data(), &CameraSpeedConfiguration::accessibilityOpened,
+                    this, [this] {
+                        m_cameraSpeedConfigAction->setIndicator(false);
+                    });
         }
         m_cameraSpeedConfiguration->showConfigDialog(resolveToolbarPopupPos(m_cameraSpeedConfigAction.get()));
     };
 
-    m_cameraSpeedConfigAction = std::make_unique<Edit3DAction>(
+    m_cameraSpeedConfigAction = std::make_unique<Edit3DIndicatorButtonAction>(
         QmlDesigner::Constants::EDIT3D_CAMERA_SPEED_CONFIG,
         View3DActionType::Empty,
-        QCoreApplication::translate("CameraSpeedConfigAction", "Open camera speed configuration dialog"),
-        QKeySequence(),
-        false,
-        false,
+        QCoreApplication::translate("CameraSpeedConfigAction",
+                                    "Open camera speed configuration dialog"),
         toolbarIcon(DesignerIcons::CameraSpeedConfigIcon),
-        this,
-        cameraSpeedConfigTrigger);
+        cameraSpeedConfigTrigger,
+        this);
 
+    m_cameraSpeedConfigAction->setIndicator(!isQDSTrusted());
 
     m_leftActions << m_selectionModeAction.get();
     m_leftActions << nullptr; // Null indicates separator

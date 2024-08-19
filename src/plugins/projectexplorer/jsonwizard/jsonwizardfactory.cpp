@@ -45,6 +45,7 @@ const char WIZARD_PATH[] = "templates/wizards";
 
 const char VERSION_KEY[] = "version";
 const char ENABLED_EXPRESSION_KEY[] = "enabled";
+const char SKIP_FOR_SUBPROJECTS_KEY[] = "skipForSubprojects";
 
 const char KIND_KEY[] = "kind";
 const char SUPPORTED_PROJECTS[] = "supportedProjectTypes";
@@ -158,7 +159,7 @@ static JsonWizardFactory::Generator parseGenerator(const QVariant &value, QStrin
         *errorMessage = Tr::tr("Generator has no typeId set.");
         return gen;
     }
-    Id typeId = Id::fromString(QLatin1String(Constants::GENERATOR_ID_PREFIX) + strVal);
+    Id typeId = Id(Constants::GENERATOR_ID_PREFIX).withSuffix(strVal);
     JsonWizardGeneratorFactory *factory
             = findOr(generatorFactories(), nullptr, [typeId](JsonWizardGeneratorFactory *f) { return f->canCreate(typeId); });
     if (!factory) {
@@ -325,7 +326,7 @@ std::pair<int, QStringList> JsonWizardFactory::screenSizeInfoFromPage(const QStr
      * pages[i] is the page of type `pageType` and data[j] is the data item with name ScreenFactor
     */
 
-    const Utils::Id id = Utils::Id::fromString(Constants::PAGE_ID_PREFIX + pageType);
+    const Utils::Id id = Utils::Id(Constants::PAGE_ID_PREFIX).withSuffix(pageType);
 
     const auto it = std::find_if(std::cbegin(m_pages), std::cend(m_pages), [&id](const Page &page) {
         return page.typeId == id;
@@ -392,7 +393,7 @@ JsonWizardFactory::Page JsonWizardFactory::parsePage(const QVariant &value, QStr
         *errorMessage = Tr::tr("Page has no typeId set.");
         return p;
     }
-    Id typeId = Id::fromString(QLatin1String(Constants::PAGE_ID_PREFIX) + strVal);
+    Id typeId = Id(Constants::PAGE_ID_PREFIX).withSuffix(strVal);
 
     JsonWizardPageFactory *factory
             = Utils::findOr(pageFactories(), nullptr, [typeId](JsonWizardPageFactory *f) { return f->canCreate(typeId); });
@@ -416,6 +417,8 @@ JsonWizardFactory::Page JsonWizardFactory::parsePage(const QVariant &value, QStr
     }
 
     QVariant enabled = getDataValue(QLatin1String(ENABLED_EXPRESSION_KEY), data, defaultData, true);
+    QVariant skippable = getDataValue(QLatin1String(SKIP_FOR_SUBPROJECTS_KEY), data, defaultData,
+                                      factory->defaultSkipForSubprojects());
 
     QVariant specifiedSubData = data.value(QLatin1String(DATA_KEY));
     QVariant defaultSubData = defaultData.value(QLatin1String(DATA_KEY));
@@ -438,6 +441,7 @@ JsonWizardFactory::Page JsonWizardFactory::parsePage(const QVariant &value, QStr
     p.index = index;
     p.data = subData;
     p.enabled = enabled;
+    p.skipForSubprojects = skippable;
 
     return p;
 }
@@ -568,14 +572,15 @@ static QStringList environmentTemplatesPaths()
 }
 
 static bool s_searchPathsInitialized = false;
+Q_GLOBAL_STATIC(FilePath, s_installedWizardsPath, {Core::ICore::resourcePath(WIZARD_PATH)})
+Q_GLOBAL_STATIC(FilePaths, s_additionalWizardPaths)
 
 FilePaths &JsonWizardFactory::searchPaths()
 {
     static FilePaths m_searchPaths;
     if (!s_searchPathsInitialized) {
         s_searchPathsInitialized = true;
-        m_searchPaths = {Core::ICore::userResourcePath(WIZARD_PATH),
-                         Core::ICore::resourcePath(WIZARD_PATH)};
+        m_searchPaths = {Core::ICore::userResourcePath(WIZARD_PATH), *s_installedWizardsPath};
         for (const QString &environmentTemplateDirName : environmentTemplatesPaths())
             m_searchPaths << FilePath::fromString(environmentTemplateDirName);
         m_searchPaths << Utils::transform(
@@ -594,6 +599,7 @@ FilePaths &JsonWizardFactory::searchPaths()
                 }
             }
         }
+        m_searchPaths += *s_additionalWizardPaths;
     }
 
     return m_searchPaths;
@@ -606,12 +612,16 @@ void JsonWizardFactory::resetSearchPaths()
 
 void JsonWizardFactory::addWizardPath(const FilePath &path)
 {
-    searchPaths().append(path);
+    s_additionalWizardPaths->append(path);
 }
 
-void JsonWizardFactory::clearWizardPaths()
+/*!
+    \internal
+*/
+void JsonWizardFactory::setInstalledWizardsPath(const Utils::FilePath &path)
 {
-    searchPaths().clear();
+    *s_installedWizardsPath = path;
+    resetSearchPaths();
 }
 
 void JsonWizardFactory::setVerbose(int level)
@@ -703,6 +713,8 @@ Wizard *JsonWizardFactory::runWizardImpl(const FilePath &path, QWidget *parent,
         page->setTitle(data.title);
         page->setSubTitle(data.subTitle);
         page->setProperty(Utils::SHORT_TITLE_PROPERTY, data.shortTitle);
+        page->setSkipForSubprojects(JsonWizard::boolFromVariant(data.skipForSubprojects,
+                                                                wizard->expander()));
 
         if (data.index >= 0) {
             wizard->setPage(data.index, page);
@@ -757,10 +769,9 @@ QString JsonWizardFactory::localizedString(const QVariant &value)
         return {};
     if (value.typeId() == QMetaType::QVariantMap) {
         QVariantMap tmp = value.toMap();
-        const QString locale = languageSetting().toLower();
-        QStringList locales;
-        locales << locale << QLatin1String("en") << QLatin1String("C") << tmp.keys();
-        for (const QString &locale : std::as_const(locales)) {
+        const QString currentLocale = languageSetting().toLower();
+        const QStringList locales{currentLocale, "en", "C"};
+        for (const QString &locale : locales) {
             QString result = tmp.value(locale, QString()).toString();
             if (!result.isEmpty())
                 return result;

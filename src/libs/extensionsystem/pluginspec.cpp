@@ -8,6 +8,7 @@
 #include "pluginmanager.h"
 
 #include <utils/algorithm.h>
+#include <utils/appinfo.h>
 #include <utils/hostosinfo.h>
 #include <utils/qtcassert.h>
 #include <utils/stringutils.h>
@@ -193,6 +194,7 @@ public:
     QString description;
     QString longDescription;
     QString url;
+    QString documentationUrl;
     QString license;
     QString revision;
     QString copyright;
@@ -322,6 +324,15 @@ QString PluginSpec::longDescription() const
 QString PluginSpec::url() const
 {
     return d->url;
+}
+
+/*!
+    Returns the documentation URL where you can find the online manual about the plugin.
+    This is valid after the PluginSpec::Read state is reached.
+*/
+QString PluginSpec::documentationUrl() const
+{
+    return d->documentationUrl;
 }
 
 /*!
@@ -559,18 +570,17 @@ QString PluginSpec::errorString() const
 }
 
 /*!
-    Returns whether this plugin can be used to fill in a dependency of the given
-    \a pluginName and \a pluginVersion.
+    Returns whether the plugin \a spec can be used to fill the \a dependency of this plugin.
 
-        \sa PluginSpec::dependencies()
+    \sa PluginSpec::dependencies()
 */
-bool PluginSpec::provides(const QString &pluginName, const QString &pluginVersion) const
+bool PluginSpec::provides(PluginSpec *spec, const PluginDependency &dependency) const
 {
-    if (QString::compare(pluginName, name(), Qt::CaseInsensitive) != 0)
+    if (QString::compare(dependency.name, spec->name(), Qt::CaseInsensitive) != 0)
         return false;
 
-    return (versionCompare(version(), pluginVersion) >= 0)
-           && (versionCompare(compatVersion(), pluginVersion) <= 0);
+    return (versionCompare(spec->version(), dependency.version) >= 0)
+           && (versionCompare(spec->compatVersion(), dependency.version) <= 0);
 }
 
 /*!
@@ -677,6 +687,7 @@ namespace {
     const char DESCRIPTION[] = "Description";
     const char LONGDESCRIPTION[] = "LongDescription";
     const char URL[] = "Url";
+    const char DOCUMENTATIONURL[] = "DocumentationUrl";
     const char CATEGORY[] = "Category";
     const char PLATFORM[] = "Platform";
     const char DEPENDENCIES[] = "Dependencies";
@@ -844,11 +855,9 @@ Utils::expected_str<void> PluginSpecPrivate::readMetaData(const QJsonObject &dat
     value = metaData.value(QLatin1String(PLUGIN_DISABLED_BY_DEFAULT));
     if (!value.isUndefined() && !value.isBool())
         return reportError(msgValueIsNotABool(PLUGIN_DISABLED_BY_DEFAULT));
-    enabledByDefault = !value.toBool(false);
+    enabledByDefault = !value.toBool(experimental || deprecated);
     qCDebug(pluginLog) << "enabledByDefault =" << enabledByDefault;
 
-    if (experimental || deprecated)
-        enabledByDefault = false;
     enabledBySettings = enabledByDefault;
 
     value = metaData.value(QLatin1String(PLUGIN_SOFTLOADABLE));
@@ -879,6 +888,11 @@ Utils::expected_str<void> PluginSpecPrivate::readMetaData(const QJsonObject &dat
     if (!value.isUndefined() && !value.isString())
         return reportError(msgValueIsNotAString(URL));
     url = value.toString();
+
+    value = metaData.value(QLatin1String(DOCUMENTATIONURL));
+    if (!value.isUndefined() && !value.isString())
+        return reportError(msgValueIsNotAString(DOCUMENTATIONURL));
+    documentationUrl = value.toString();
 
     value = metaData.value(QLatin1String(CATEGORY));
     if (!value.isUndefined() && !value.isString())
@@ -1077,8 +1091,8 @@ bool PluginSpec::resolveDependencies(const PluginSpecs &specs)
 
     QHash<PluginDependency, PluginSpec *> resolvedDependencies;
     for (const PluginDependency &dependency : d->dependencies) {
-        PluginSpec *const found = findOrDefault(specs, [&dependency](PluginSpec *spec) {
-            return spec->provides(dependency.name, dependency.version);
+        PluginSpec *const found = findOrDefault(specs, [this, &dependency](PluginSpec *spec) {
+            return provides(spec, dependency);
         });
         if (!found) {
             if (dependency.type == PluginDependency::Required) {
@@ -1264,4 +1278,54 @@ void CppPluginSpec::kill()
     d->plugin = nullptr;
     setState(PluginSpec::Deleted);
 }
+
+Utils::FilePath CppPluginSpec::installLocation(bool inUserFolder) const
+{
+    return inUserFolder ? appInfo().userPluginsRoot : appInfo().plugins;
+}
+
+static QStringList libraryNameFilter()
+{
+    if (HostOsInfo::isWindowsHost())
+        return {"*.dll"};
+    if (HostOsInfo::isLinuxHost())
+        return {"*.so"};
+    return {"*.dylib"};
+}
+
+static QList<PluginSpec *> createCppPluginsFromArchive(const FilePath &path)
+{
+    QList<PluginSpec *> results;
+
+    // look for plugin
+    QDirIterator
+        it(path.path(),
+           libraryNameFilter(),
+           QDir::Files | QDir::NoSymLinks,
+           QDirIterator::Subdirectories);
+
+    while (it.hasNext()) {
+        it.next();
+        expected_str<PluginSpec *> spec = readCppPluginSpec(FilePath::fromUserInput(it.filePath()));
+        if (spec)
+            results.push_back(spec.value());
+    }
+    return results;
+}
+
+QList<PluginFromArchiveFactory> &pluginSpecsFromArchiveFactories()
+{
+    static QList<PluginFromArchiveFactory> factories = {&createCppPluginsFromArchive};
+    return factories;
+}
+
+QList<PluginSpec *> pluginSpecsFromArchive(const Utils::FilePath &path)
+{
+    QList<PluginSpec *> results;
+    for (const PluginFromArchiveFactory &factory : pluginSpecsFromArchiveFactories()) {
+        results += factory(path);
+    }
+    return results;
+}
+
 } // namespace ExtensionSystem

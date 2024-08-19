@@ -23,7 +23,9 @@
     applications on them.
 
     \note If you use qmake to build the project and the device does not have
-    Qt libraries, you need a fake Qt installation.
+    Qt libraries, you need a Qt installation that meets the requirements in
+    \l{Self-built Qt versions}. In addition, the \c mkspecs directory needs
+    to be complete enough to parse .pro files.
 
     The following toolchains are supported for building applications:
 
@@ -69,7 +71,8 @@
 
     The available settings depend on the debug server provider.
 
-    \sa {Enable and disable plugins}, {Bare Metal}{How To: Develop for Bare Metal}
+    \sa {Add kits}, {Enable and disable plugins},
+    {Bare Metal}{How To: Develop for Bare Metal}
 */
 
 /*!
@@ -294,6 +297,7 @@
     \previouspage creator-how-tos.html
 
     \ingroup creator-how-to-bare-metal
+    \ingroup creator-how-to-manage-kits
 
     \title Add Bare Metal devices
 

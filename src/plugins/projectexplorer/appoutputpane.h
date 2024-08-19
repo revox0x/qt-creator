@@ -3,10 +3,9 @@
 
 #pragma once
 
-#include "projectexplorersettings.h"
-
-#include <coreplugin/ioutputpane.h>
+#include <coreplugin/coreconstants.h>
 #include <coreplugin/dialogs/ioptionspage.h>
+#include <coreplugin/ioutputpane.h>
 
 #include <utils/outputformat.h>
 
@@ -24,62 +23,63 @@ namespace Core { class OutputWindow; }
 namespace ProjectExplorer {
 
 class RunControl;
-class Project;
 
 namespace Internal {
 
 class ShowOutputTaskHandler;
 class TabWidget;
 
-class AppOutputPane : public Core::IOutputPane
-{
-    Q_OBJECT
+enum class AppOutputPaneMode { FlashOnOutput, PopupOnOutput, PopupOnFirstOutput };
 
+class AppOutputSettings
+{
 public:
+    AppOutputPaneMode runOutputMode = AppOutputPaneMode::PopupOnFirstOutput;
+    AppOutputPaneMode debugOutputMode = AppOutputPaneMode::FlashOnOutput;
+    bool cleanOldOutput = false;
+    bool mergeChannels = false;
+    bool wrapOutput = false;
+    int maxCharCount = Core::Constants::DEFAULT_MAX_CHAR_COUNT;
+};
+
+class AppOutputPane final : public Core::IOutputPane
+{
+public:
+    AppOutputPane();
+    ~AppOutputPane() final;
+
+    bool aboutToClose() const;
+
+    QList<RunControl *> allRunControls() const;
+
+    const AppOutputSettings &settings() const { return m_settings; }
+    void setSettings(const AppOutputSettings &settings);
+
+    void prepareRunControlStart(RunControl *runControl);
+    void showOutputPaneForRunControl(RunControl *runControl);
+
+    void closeTabsWithoutPrompt();
+
+private:
     enum CloseTabMode {
         CloseTabNoPrompt,
         CloseTabWithPrompt
     };
 
-    AppOutputPane();
-    ~AppOutputPane() override;
-
-    QWidget *outputWidget(QWidget *) override;
-    QList<QWidget *> toolBarWidgets() const override;
-    void clearContents() override;
-    bool canFocus() const override;
-    bool hasFocus() const override;
-    void setFocus() override;
-
-    bool canNext() const override;
-    bool canPrevious() const override;
-    void goToNext() override;
-    void goToPrev() override;
-    bool canNavigate() const override;
-
-    void createNewOutputWindow(RunControl *rc);
-    void showTabFor(RunControl *rc);
-    void setBehaviorOnOutput(RunControl *rc, AppOutputPaneMode mode);
-
-    bool aboutToClose() const;
     void closeTabs(CloseTabMode mode);
+    void showTabFor(RunControl *rc);
 
-    QList<RunControl *> allRunControls() const;
-
-    // ApplicationOutput specifics
+    void setBehaviorOnOutput(RunControl *rc, AppOutputPaneMode mode);
     void projectRemoved();
 
-    const AppOutputSettings &settings() const { return m_settings; }
-    void setSettings(const AppOutputSettings &settings);
-
-private:
+    void createNewOutputWindow(RunControl *rc);
     void appendMessage(ProjectExplorer::RunControl *rc, const QString &out,
                        Utils::OutputFormat format);
     void reRunRunControl();
     void stopRunControl();
     void attachToRunControl();
     void tabChanged(int);
-    void contextMenuRequested(const QPoint &pos, int index);
+    void contextMenuRequested(const QPoint &pos);
     void runControlFinished(RunControl *runControl);
 
     void aboutToUnloadSession();
@@ -112,9 +112,25 @@ private:
     RunControl *currentRunControl() const;
     void handleOldOutput(Core::OutputWindow *window) const;
     void updateCloseActions();
-    void updateFilter() override;
-    const QList<Core::OutputWindow *> outputWindows() const override;
-    void ensureWindowVisible(Core::OutputWindow *ow) override;
+
+    QWidget *outputWidget(QWidget *) final;
+    QList<QWidget *> toolBarWidgets() const final;
+    void clearContents() final;
+    bool canFocus() const final;
+    bool hasFocus() const final;
+    void setFocus() final;
+
+    bool canNext() const final;
+    bool canPrevious() const final;
+    void goToNext() final;
+    void goToPrev() final;
+    bool canNavigate() const final;
+
+    bool hasFilterContext() const final;
+
+    void updateFilter() final;
+    const QList<Core::OutputWindow *> outputWindows() const final;
+    void ensureWindowVisible(Core::OutputWindow *ow) final;
 
     void loadSettings();
     void storeSettings() const;
@@ -140,6 +156,11 @@ class AppOutputSettingsPage final : public Core::IOptionsPage
 public:
     AppOutputSettingsPage();
 };
+
+AppOutputPane &appOutputPane();
+
+void setupAppOutputPane();
+void destroyAppOutputPane();
 
 } // namespace Internal
 } // namespace ProjectExplorer

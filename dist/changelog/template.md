@@ -5,10 +5,9 @@ Qt Creator version 13 contains bug fixes and new features.
 
 The most important changes are listed in this document. For a complete list of
 changes, see the Git log for the Qt Creator sources that you can check out from
-the public Git repository. For example:
+the public Git repository or view online at
 
-    git clone git://code.qt.io/qt-creator/qt-creator.git
-    git log --cherry-pick --pretty=oneline origin/12.0..v13.0.0
+<https://code.qt.io/cgit/qt-creator/qt-creator.git/log/?id=12.0..v13.0.0>
 
 New plugins
 -----------
@@ -44,6 +43,10 @@ Editing
 
 ### Models
 
+### SCXML
+
+### FakeVim
+
 ### Binary Files
 
 Projects
@@ -56,6 +59,8 @@ Projects
 ### Qbs
 
 ### Python
+
+### Workspace
 
 ### vcpkg
 
@@ -78,6 +83,10 @@ Analyzer
 ### Axivion
 
 ### CTF Visualizer
+
+### Valgrind
+
+### Cppcheck
 
 Terminal
 --------
@@ -119,7 +128,11 @@ Platforms
 
 ### MCU
 
+### Qt Application Manager
+
 ### QNX
+
+### Bare Metal
 
 Credits for these changes go to:
 --------------------------------

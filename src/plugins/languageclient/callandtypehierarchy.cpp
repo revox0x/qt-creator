@@ -66,17 +66,26 @@ protected:
             return QVariant::fromValue(
                 Link(m_client->serverUriToHostPath(m_item.uri()), start.line() + 1, start.character()));
         }
-        case AnnotationRole:
+        case AnnotationRole: {
+            QStringList result;
             if (const std::optional<QString> detail = m_item.detail())
-                return *detail;
-            return {};
+                result << *detail;
+            if (childCount() > 0)
+                result << QString("[%1]").arg(childCount());
+            return result.isEmpty() ? QVariant() : QVariant(result.join(' '));
+        }
         default:
             return TreeItem::data(column, role);
         }
     }
 
 private:
-    bool canFetchMore() const override { return m_client && !m_fetchedChildren; }
+    bool canFetchMore() const override
+    {
+        if (m_client && !m_fetchedChildren)
+            const_cast<HierarchyItem*>(this)->fetchMore();
+        return false;
+    }
 
     void fetchMore() override
     {
@@ -96,8 +105,6 @@ private:
                             appendChild(new HierarchyItem(getSourceItem(item), m_client));
                     }
                 }
-                if (!hasChildren())
-                    update();
             });
         m_client->sendMessage(request);
     }
@@ -267,6 +274,7 @@ public:
         m_view->setModel(&m_model);
         m_view->setActivationMode(SingleClickActivation);
         m_view->setItemDelegate(&m_delegate);
+        m_view->setUniformRowHeights(true);
 
         theWidget->setLayout(new QVBoxLayout);
         theWidget->layout()->addWidget(m_view);
@@ -432,7 +440,7 @@ public:
         Icons::RELOAD_TOOLBAR.icon();
         auto button = new QToolButton;
         button->setIcon(Icons::RELOAD_TOOLBAR.icon());
-        button->setToolTip(LanguageClient::Tr::tr(
+        button->setToolTip(::LanguageClient::Tr::tr(
             "Reloads the call hierarchy for the symbol under cursor position."));
         connect(button, &QToolButton::clicked, this, [h] { h->updateHierarchyAtCursorPosition(); });
         return {h, {button}};

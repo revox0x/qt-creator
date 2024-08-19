@@ -8,6 +8,7 @@
 #include "../cppprojectfile.h"
 #include "../cpprefactoringchanges.h"
 #include "../indexitem.h"
+#include "../insertionpointlocator.h"
 #include "cppquickfix.h"
 #include "cppquickfixhelpers.h"
 
@@ -1139,6 +1140,25 @@ private slots:
             ;
         testDocuments << CppTestDocument::create("file.cpp", original, expected);
         QTest::newRow("inserting_onlyIncludeGuard")
+            << TestIncludePaths::globalIncludePath()
+            << testDocuments << firstRefactoringOperation << "\"file.h\"";
+        testDocuments.clear();
+
+        // -------------------------------------------------------------------------------------------
+
+        original =
+            "#pragma once\n"
+            "void @f();\n"
+            ;
+        expected =
+            "#pragma once\n"
+            "\n"
+            "#include \"file.h\"\n"
+            "\n"
+            "void f();\n"
+            ;
+        testDocuments << CppTestDocument::create("file.cpp", original, expected);
+        QTest::newRow("inserting_onlyPragmaOnce")
             << TestIncludePaths::globalIncludePath()
             << testDocuments << firstRefactoringOperation << "\"file.h\"";
         testDocuments.clear();

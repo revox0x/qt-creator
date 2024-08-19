@@ -383,9 +383,9 @@ void LocatorMatcher::start()
         parallel,
         collectorStorage,
         AsyncTask<LocatorFilterEntries>(onCollectorSetup, onCollectorDone),
-        Group {
-            parallelLimit(d->m_parallelLimit),
+        For {
             iterator,
+            parallelLimit(d->m_parallelLimit),
             TaskTreeTask(onTaskTreeSetup)
         }
     };
@@ -884,7 +884,8 @@ void ILocatorFilter::setConfigurable(bool configurable)
 
 /*!
     Shows the standard configuration dialog with options for the prefix string
-    and for isIncludedByDefault(). The \a additionalWidget is added at the top.
+    and for isIncludedByDefault(). \a parent is used as the dialog's parent.
+    The \a additionalWidget is added at the top.
     Ownership of \a additionalWidget stays with the caller, but its parent is
     reset to \c nullptr.
 

@@ -11,6 +11,7 @@
 #include "cpptoolsreuse.h"
 
 #include <coreplugin/dialogs/ioptionspage.h>
+#include <coreplugin/editormanager/editormanager.h>
 #include <coreplugin/icore.h>
 #include <coreplugin/session.h>
 #include <projectexplorer/project.h>
@@ -19,6 +20,7 @@
 #include <utils/clangutils.h>
 #include <utils/itemviews.h>
 #include <utils/layoutbuilder.h>
+#include <utils/macroexpander.h>
 #include <utils/qtcprocess.h>
 #include <utils/variablechooser.h>
 
@@ -200,6 +202,16 @@ void ClangdSettings::setCustomDiagnosticConfigs(const ClangDiagnosticConfigs &co
     instance().saveSettings();
 }
 
+ClangDiagnosticConfigsModel ClangdSettings::diagnosticConfigsModel()
+{
+    const ClangDiagnosticConfigs &customConfigs = instance().customDiagnosticConfigs();
+    ClangDiagnosticConfigsModel model;
+    model.addBuiltinConfigs();
+    for (const ClangDiagnosticConfig &config : customConfigs)
+        model.appendOrUpdate(config);
+    return model;
+}
+
 FilePath ClangdSettings::clangdFilePath() const
 {
     if (!m_data.executableFilePath.isEmpty())
@@ -207,17 +219,17 @@ FilePath ClangdSettings::clangdFilePath() const
     return fallbackClangdFilePath();
 }
 
-FilePath ClangdSettings::projectIndexPath(const Utils::MacroExpander &expander) const
+FilePath ClangdSettings::projectIndexPath(const MacroExpander &expander) const
 {
     return FilePath::fromUserInput(expander.expand(m_data.projectIndexPathTemplate));
 }
 
-FilePath ClangdSettings::sessionIndexPath(const Utils::MacroExpander &expander) const
+FilePath ClangdSettings::sessionIndexPath(const MacroExpander &expander) const
 {
     return FilePath::fromUserInput(expander.expand(m_data.sessionIndexPathTemplate));
 }
 
-bool ClangdSettings::sizeIsOkay(const Utils::FilePath &fp) const
+bool ClangdSettings::sizeIsOkay(const FilePath &fp) const
 {
     return !sizeThresholdEnabled() || sizeThresholdInKb() * 1024 >= fp.fileSize();
 }
@@ -236,7 +248,7 @@ Id ClangdSettings::diagnosticConfigId() const
 
 ClangDiagnosticConfig ClangdSettings::diagnosticConfig() const
 {
-    return diagnosticConfigsModel(customDiagnosticConfigs()).configWithId(diagnosticConfigId());
+    return diagnosticConfigsModel().configWithId(diagnosticConfigId());
 }
 
 ClangdSettings::Granularity ClangdSettings::granularity() const
@@ -760,7 +772,7 @@ ClangdSettingsWidget::ClangdSettingsWidget(const ClangdSettings::Data &settingsD
 
     m_configSelectionWidget = new ClangDiagnosticConfigsSelectionWidget(formLayout);
     m_configSelectionWidget->refresh(
-        diagnosticConfigsModel(settings.customDiagnosticConfigs()),
+        ClangdSettings::diagnosticConfigsModel(),
         settings.diagnosticConfigId(),
         [](const ClangDiagnosticConfigs &configs, const Utils::Id &configToSelect) {
             return new CppEditor::ClangDiagnosticConfigsWidget(configs, configToSelect);

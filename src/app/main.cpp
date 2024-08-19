@@ -54,6 +54,7 @@
 #endif
 
 using namespace ExtensionSystem;
+using namespace Utils;
 
 enum { OptionIndent = 4, DescriptionIndent = 34 };
 
@@ -83,6 +84,7 @@ const char CLIENT_OPTION[] = "-client";
 const char SETTINGS_OPTION[] = "-settingspath";
 const char INSTALL_SETTINGS_OPTION[] = "-installsettingspath";
 const char TEST_OPTION[] = "-test";
+const char STYLE_OPTION[] = "-style";
 const char TEMPORARY_CLEAN_SETTINGS1[] = "-temporarycleansettings";
 const char TEMPORARY_CLEAN_SETTINGS2[] = "-tcs";
 const char PID_OPTION[] = "-pid";
@@ -107,7 +109,7 @@ static inline QString toHtml(const QString &t)
 
 static void displayHelpText(const QString &t)
 {
-    if (Utils::HostOsInfo::isWindowsHost() && qApp)
+    if (HostOsInfo::isWindowsHost() && qApp)
         QMessageBox::information(nullptr, QLatin1String(Core::Constants::IDE_DISPLAY_NAME), toHtml(t));
     else
         printf("%s", qPrintable(t));
@@ -115,7 +117,7 @@ static void displayHelpText(const QString &t)
 
 static void displayError(const QString &t)
 {
-    if (Utils::HostOsInfo::isWindowsHost() && qApp)
+    if (HostOsInfo::isWindowsHost() && qApp)
         QMessageBox::critical(nullptr, QLatin1String(Core::Constants::IDE_DISPLAY_NAME), t);
     else
         qCritical("%s", qPrintable(t));
@@ -175,34 +177,30 @@ static inline int askMsgSendFailed()
                 QMessageBox::Retry);
 }
 
-static inline QStringList getPluginPaths()
+static inline FilePaths getPluginPaths()
 {
-    QStringList rc(QDir::cleanPath(QApplication::applicationDirPath()
-                                   + '/' + RELATIVE_PLUGIN_PATH));
+    FilePaths rc;
+    rc << appInfo().plugins << appInfo().luaPlugins << appInfo().userLuaPlugins;
+
+    const auto version = [](int micro) {
+        return QString("%1.%2.%3").arg(IDE_VERSION_MAJOR).arg(IDE_VERSION_MINOR).arg(micro);
+    };
+
+    const int minPatchVersion = qMin(
+        IDE_VERSION_RELEASE,
+        QVersionNumber::fromString(Core::Constants::IDE_VERSION_COMPAT).microVersion());
+
     // Local plugin path: <localappdata>/plugins/<ideversion>
     //    where <localappdata> is e.g.
     //    "%LOCALAPPDATA%\QtProject\qtcreator" on Windows Vista and later
     //    "$XDG_DATA_HOME/data/QtProject/qtcreator" or "~/.local/share/data/QtProject/qtcreator" on Linux
     //    "~/Library/Application Support/QtProject/Qt Creator" on Mac
-    QString pluginPath = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
-    if (Utils::HostOsInfo::isAnyUnixHost() && !Utils::HostOsInfo::isMacHost())
-        pluginPath += QLatin1String("/data");
-    pluginPath += QLatin1Char('/')
-            + QLatin1String(Core::Constants::IDE_SETTINGSVARIANT_STR)
-            + QLatin1Char('/');
-    pluginPath += QLatin1String(Utils::HostOsInfo::isMacHost() ?
-                                    Core::Constants::IDE_DISPLAY_NAME :
-                                    Core::Constants::IDE_ID);
-    pluginPath += QLatin1String("/plugins/");
+    const FilePath userPluginPath = appInfo().userPluginsRoot;
+
     // Qt Creator X.Y.Z can load plugins from X.Y.(Z-1) etc, so add current and previous
     // patch versions
-    const QString minorVersion = QString::number(IDE_VERSION_MAJOR) + '.'
-                                 + QString::number(IDE_VERSION_MINOR) + '.';
-    const int minPatchVersion
-        = qMin(IDE_VERSION_RELEASE,
-               QVersionNumber::fromString(Core::Constants::IDE_VERSION_COMPAT).microVersion());
     for (int patchVersion = IDE_VERSION_RELEASE; patchVersion >= minPatchVersion; --patchVersion)
-        rc.push_back(pluginPath + minorVersion + QString::number(patchVersion));
+        rc << userPluginPath / version(patchVersion);
     return rc;
 }
 
@@ -266,25 +264,25 @@ static void setupInstallSettings(QString &installSettingspath, bool redirect = t
     } while (containsInstallSettingsKey && count < 3);
 }
 
-static Utils::QtcSettings *createUserSettings()
+static QtcSettings *createUserSettings()
 {
-    return new Utils::QtcSettings(QSettings::IniFormat,
-                                  QSettings::UserScope,
-                                  QLatin1String(Core::Constants::IDE_SETTINGSVARIANT_STR),
-                                  QLatin1String(Core::Constants::IDE_CASED_ID));
+    return new QtcSettings(QSettings::IniFormat,
+                           QSettings::UserScope,
+                           QLatin1String(Core::Constants::IDE_SETTINGSVARIANT_STR),
+                           QLatin1String(Core::Constants::IDE_CASED_ID));
 }
 
 static void setHighDpiEnvironmentVariable()
 {
-    if (Utils::StyleHelper::defaultHighDpiScaleFactorRoundingPolicy()
+    if (StyleHelper::defaultHighDpiScaleFactorRoundingPolicy()
             == Qt::HighDpiScaleFactorRoundingPolicy::Unset
-        || qEnvironmentVariableIsSet(Utils::StyleHelper::C_QT_SCALE_FACTOR_ROUNDING_POLICY))
+        || qEnvironmentVariableIsSet(StyleHelper::C_QT_SCALE_FACTOR_ROUNDING_POLICY))
         return;
 
-    std::unique_ptr<Utils::QtcSettings> settings(createUserSettings());
+    std::unique_ptr<QtcSettings> settings(createUserSettings());
 
     using Policy = Qt::HighDpiScaleFactorRoundingPolicy;
-    const Policy defaultPolicy = Utils::StyleHelper::defaultHighDpiScaleFactorRoundingPolicy();
+    const Policy defaultPolicy = StyleHelper::defaultHighDpiScaleFactorRoundingPolicy();
     const Policy userPolicy = settings->value("Core/HighDpiScaleFactorRoundingPolicy",
                                               int(defaultPolicy)).value<Policy>();
     QGuiApplication::setHighDpiScaleFactorRoundingPolicy(userPolicy);
@@ -320,6 +318,7 @@ struct Options
     std::optional<QString> userLibraryPath;
     bool hasTestOption = false;
     bool wantsCleanSettings = false;
+    bool hasStyleOption = false;
 };
 
 Options parseCommandLine(int argc, char *argv[])
@@ -356,12 +355,15 @@ Options parseCommandLine(int argc, char *argv[])
             options.wantsCleanSettings = true;
             options.preAppArguments << arg;
         } else { // arguments that are still passed on to the application
+            if (arg == STYLE_OPTION)
+                options.hasStyleOption = true;
             if (arg == TEST_OPTION)
                 options.hasTestOption = true;
             options.appArguments.push_back(*it);
         }
         ++it;
     }
+
     return options;
 }
 
@@ -411,8 +413,8 @@ QStringList lastSessionArgument()
 // and src\tools\qml2puppet\qml2puppet\qmlpuppet.cpp -> QString crashReportsPath()
 QString crashReportsPath()
 {
-    std::unique_ptr<Utils::QtcSettings> settings(createUserSettings());
-    if (Utils::HostOsInfo::isMacHost())
+    std::unique_ptr<QtcSettings> settings(createUserSettings());
+    if (HostOsInfo::isMacHost())
         return QFileInfo(settings->fileName()).path() + "/crashpad_reports";
     else
         return QCoreApplication::applicationDirPath()
@@ -488,7 +490,7 @@ private:
         if (type == QtFatalMsg) {
             // Show some kind of GUI with collected messages before exiting.
             // For Windows, Qt already uses a dialog.
-            if (Utils::HostOsInfo::isLinuxHost()) {
+            if (HostOsInfo::isLinuxHost()) {
 #if (QT_VERSION >= QT_VERSION_CHECK(6, 5, 0) && QT_VERSION < QT_VERSION_CHECK(6, 5, 3)) \
     || (QT_VERSION >= QT_VERSION_CHECK(6, 6, 0) && QT_VERSION < QT_VERSION_CHECK(6, 6, 1))
                 // Information about potentially missing libxcb-cursor0 is printed by Qt since Qt 6.5.3 and Qt 6.6.1
@@ -498,7 +500,7 @@ private:
 #endif
                 if (QFile::exists("/usr/bin/xmessage"))
                     QProcess::startDetached("/usr/bin/xmessage", {instance->messages.join("\n")});
-            } else if (Utils::HostOsInfo::isMacHost()) {
+            } else if (HostOsInfo::isMacHost()) {
                 QProcess::startDetached("/usr/bin/osascript",
                                         {"-e",
                                          "display dialog \""
@@ -518,12 +520,44 @@ private:
 
 ShowInGuiHandler *ShowInGuiHandler::instance = nullptr;
 
+FilePath userPluginsRoot()
+{
+    FilePath rootPath = FilePath::fromUserInput(
+        QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation));
+
+    if (HostOsInfo::isAnyUnixHost() && !HostOsInfo::isMacHost())
+        rootPath /= "data";
+
+    rootPath /= Core::Constants::IDE_SETTINGSVARIANT_STR;
+
+    rootPath /= QLatin1StringView(
+        HostOsInfo::isMacHost() ? Core::Constants::IDE_DISPLAY_NAME : Core::Constants::IDE_ID);
+    rootPath /= "plugins";
+
+    rootPath /= Core::Constants::IDE_VERSION_LONG;
+
+    return rootPath;
+}
+
+FilePath userResourcePath(const QString &settingsPath, const QString &appId)
+{
+    const FilePath configDir = FilePath::fromUserInput(settingsPath).parentDir();
+    const FilePath urp = configDir / appId;
+
+    if (!urp.exists()) {
+        if (!urp.createDir())
+            qWarning() << "could not create" << urp;
+    }
+
+    return urp;
+}
+
 int main(int argc, char **argv)
 {
     Restarter restarter(argc, argv);
-    Utils::Environment::systemEnvironment(); // cache system environment before we do any changes
+    Environment::systemEnvironment(); // cache system environment before we do any changes
 
-    Utils::FSEngine fileSystemEngine;
+    FSEngine fileSystemEngine;
 
     // Manually determine various command line options
     // We can't use the regular way of the plugin manager,
@@ -531,24 +565,15 @@ int main(int argc, char **argv)
     Options options = parseCommandLine(argc, argv);
     applicationDirPath(argv[0]);
 
-    const bool hasStyleOption = Utils::findOrDefault(options.appArguments, [](char *arg) {
-        return strcmp(arg, "-style") == 0;
-    });
-
-    if (qEnvironmentVariableIsSet("QTC_DO_NOT_PROPAGATE_LD_PRELOAD")) {
-        Utils::Environment::modifySystemEnvironment(
-            {{"LD_PRELOAD", "", Utils::EnvironmentItem::Unset}});
-    }
+    if (qEnvironmentVariableIsSet("QTC_DO_NOT_PROPAGATE_LD_PRELOAD"))
+        Environment::modifySystemEnvironment({{"LD_PRELOAD", "", EnvironmentItem::Unset}});
 
     auto restoreEnvVarFromSquish = [](const QByteArray &squishVar, const QString &var) {
         if (qEnvironmentVariableIsSet(squishVar)) {
-            Utils::Environment::modifySystemEnvironment(
-                {{var, "", Utils::EnvironmentItem::Unset}});
+            Environment::modifySystemEnvironment({{var, "", EnvironmentItem::Unset}});
             const QString content = qEnvironmentVariable(squishVar);
-            if (!content.isEmpty()) {
-                Utils::Environment::modifySystemEnvironment(
-                    {{var, content, Utils::EnvironmentItem::Prepend}});
-            }
+            if (!content.isEmpty())
+                Environment::modifySystemEnvironment({{var, content, EnvironmentItem::Prepend}});
         }
     };
 
@@ -557,15 +582,15 @@ int main(int argc, char **argv)
 
     if (options.userLibraryPath) {
         if ((*options.userLibraryPath).isEmpty()) {
-            Utils::Environment::modifySystemEnvironment(
-                {{"LD_LIBRARY_PATH", "", Utils::EnvironmentItem::Unset}});
+            Environment::modifySystemEnvironment(
+                {{"LD_LIBRARY_PATH", "", EnvironmentItem::Unset}});
         } else {
-            Utils::Environment::modifySystemEnvironment(
-                {{"LD_LIBRARY_PATH", *options.userLibraryPath, Utils::EnvironmentItem::SetEnabled}});
+            Environment::modifySystemEnvironment(
+                {{"LD_LIBRARY_PATH", *options.userLibraryPath, EnvironmentItem::SetEnabled}});
         }
     }
 
-    if (Utils::HostOsInfo::isMacHost()) {
+    if (HostOsInfo::isMacHost()) {
         QSurfaceFormat surfaceFormat;
         surfaceFormat.setStencilBufferSize(8);
         surfaceFormat.setDepthBufferSize(24);
@@ -582,7 +607,7 @@ int main(int argc, char **argv)
     }
 
 #if defined(QTC_FORCE_XCB)
-    if (Utils::HostOsInfo::isLinuxHost() && !qEnvironmentVariableIsSet("QT_QPA_PLATFORM")) {
+    if (HostOsInfo::isLinuxHost() && !qEnvironmentVariableIsSet("QT_QPA_PLATFORM")) {
         // Enforce XCB on Linux/Gnome, if the user didn't override via QT_QPA_PLATFORM
         // This was previously done in Qt, but removed in Qt 6.3. We found that bad things can still happen,
         // like the Wayland session simply crashing when starting Qt Creator.
@@ -601,7 +626,7 @@ int main(int argc, char **argv)
     }
 #endif
 
-    Utils::TemporaryDirectory::setMasterTemporaryDirectory(QDir::tempPath() + "/" + Core::Constants::IDE_CASED_ID + "-XXXXXX");
+    TemporaryDirectory::setMasterTemporaryDirectory(QDir::tempPath() + "/" + Core::Constants::IDE_CASED_ID + "-XXXXXX");
 
 #ifdef Q_OS_MACOS
     // increase the number of file that can be opened in Qt Creator.
@@ -612,9 +637,9 @@ int main(int argc, char **argv)
     setrlimit(RLIMIT_NOFILE, &rl);
 #endif
 
-    QScopedPointer<Utils::TemporaryDirectory> temporaryCleanSettingsDir;
+    QScopedPointer<TemporaryDirectory> temporaryCleanSettingsDir;
     if (options.settingsPath.isEmpty() && (options.hasTestOption || options.wantsCleanSettings)) {
-        temporaryCleanSettingsDir.reset(new Utils::TemporaryDirectory("qtc-test-settings"));
+        temporaryCleanSettingsDir.reset(new TemporaryDirectory("qtc-test-settings"));
         if (!temporaryCleanSettingsDir->isValid())
             return 1;
         options.settingsPath = temporaryCleanSettingsDir->path().path();
@@ -648,7 +673,7 @@ int main(int argc, char **argv)
     QCoreApplication::setOrganizationName(QLatin1String(Core::Constants::IDE_SETTINGSVARIANT_STR));
     QGuiApplication::setApplicationDisplayName(Core::Constants::IDE_DISPLAY_NAME);
 
-    const QScopeGuard cleanup([] { Utils::Singleton::deleteAll(); });
+    const QScopeGuard cleanup([] { Singleton::deleteAll(); });
 
     const QStringList pluginArguments = app.arguments();
 
@@ -658,12 +683,12 @@ int main(int argc, char **argv)
     const QStringList installPluginPaths = getInstallPluginPaths();
     // Re-setup install settings for real
     setupInstallSettings(options.installSettingsPath);
-    Utils::QtcSettings *settings = createUserSettings();
-    Utils::QtcSettings *installSettings
-        = new Utils::QtcSettings(QSettings::IniFormat,
-                                 QSettings::SystemScope,
-                                 QLatin1String(Core::Constants::IDE_SETTINGSVARIANT_STR),
-                                 QLatin1String(Core::Constants::IDE_CASED_ID));
+    QtcSettings *settings = createUserSettings();
+    QtcSettings *installSettings
+        = new QtcSettings(QSettings::IniFormat,
+                          QSettings::SystemScope,
+                          QLatin1String(Core::Constants::IDE_SETTINGSVARIANT_STR),
+                          QLatin1String(Core::Constants::IDE_CASED_ID));
     // warn if -installsettings points to a place where no install settings are located
     if (!options.installSettingsPath.isEmpty() && !QFileInfo::exists(installSettings->fileName())) {
         displayError(QLatin1String("The install settings \"%1\" do not exist. The %2 option must "
@@ -673,15 +698,22 @@ int main(int argc, char **argv)
                               INSTALL_SETTINGS_OPTION,
                               Core::Constants::IDE_SETTINGSVARIANT_STR));
     }
-    Utils::TerminalCommand::setSettings(settings);
+    TerminalCommand::setSettings(settings);
     setPixmapCacheLimit();
     loadFonts();
 
-    // On 100% or 200% scaling we can use the default 'Vista' style on Windows
-    qreal tmp;
-    const bool fractionalDpi = !qFuzzyIsNull(std::modf(qApp->devicePixelRatio(), &tmp));
-    if (Utils::HostOsInfo::isWindowsHost() && fractionalDpi && !hasStyleOption)
-        QApplication::setStyle(QLatin1String("fusion"));
+    if (Utils::HostOsInfo::isWindowsHost() && !options.hasStyleOption) {
+        // The Windows 11 default style (Qt 6.7) has major issues, therefore
+        // set the previous default style: "windowsvista"
+        // FIXME: check newer Qt Versions
+        QApplication::setStyle(QLatin1String("windowsvista"));
+
+        // On scaling different than 100% or 200% use the "fusion" style
+        qreal tmp;
+        const bool fractionalDpi = !qFuzzyIsNull(std::modf(qApp->devicePixelRatio(), &tmp));
+        if (fractionalDpi)
+            QApplication::setStyle(QLatin1String("fusion"));
+    }
 
     const int threadCount = QThreadPool::globalInstance()->maxThreadCount();
     QThreadPool::globalInstance()->setMaxThreadCount(qMax(4, 2 * threadCount));
@@ -705,10 +737,10 @@ int main(int argc, char **argv)
     PluginManager::setSettings(settings);
     PluginManager::startProfiling();
 
-    Utils::BaseAspect::setQtcSettings(settings);
+    BaseAspect::setQtcSettings(settings);
 
     using namespace Core;
-    Utils::AppInfo info;
+    AppInfo info;
     info.author = Constants::IDE_AUTHOR;
     info.year = Constants::IDE_YEAR;
     info.displayVersion = Constants::IDE_VERSION_DISPLAY;
@@ -716,6 +748,16 @@ int main(int argc, char **argv)
     info.revision = Constants::IDE_REVISION_STR;
     info.revisionUrl = Constants::IDE_REVISION_URL;
     info.userFileExtension = Constants::IDE_PROJECT_USER_FILE_EXTENSION;
+
+    const FilePath appDirPath = FilePath::fromUserInput(QApplication::applicationDirPath());
+
+    info.plugins = (appDirPath / RELATIVE_PLUGIN_PATH).cleanPath();
+    info.userPluginsRoot = userPluginsRoot();
+    info.resources = (appDirPath / RELATIVE_DATA_PATH).cleanPath();
+    info.userResources = userResourcePath(settings->fileName(), Constants::IDE_ID);
+    info.luaPlugins = info.resources / "lua-plugins";
+    info.userLuaPlugins = info.userResources / "lua-plugins";
+
     Utils::Internal::setAppInfo(info);
 
     QTranslator translator;
@@ -742,11 +784,13 @@ int main(int argc, char **argv)
                 break;
             }
             Q_UNUSED(translator.load(QString())); // unload()
-        } else if (locale == QLatin1String("C") /* overrideLanguage == "English" */) {
-            // use built-in
-            break;
-        } else if (locale.startsWith(QLatin1String("en")) /* "English" is built-in */) {
-            // use built-in
+        } else if (
+            locale == QLatin1String("C") /* overrideLanguage == "English" */
+            || locale.startsWith(QLatin1String("en")) /* "English" is built-in */) {
+            // Load any spelling fixes that might have been done temporarily after string freeze,
+            // for the rest use the built-in source text
+            if (translator.load("qtcreator_en", creatorTrPath))
+                app.installTranslator(&translator);
             break;
         }
     }
@@ -755,15 +799,16 @@ int main(int argc, char **argv)
     if (!overrideCodecForLocale.isEmpty())
         QTextCodec::setCodecForLocale(QTextCodec::codecForName(overrideCodecForLocale));
 
-    app.setDesktopFileName("org.qt-project.qtcreator");
+    app.setDesktopFileName(IDE_APP_ID);
 
     // Make sure we honor the system's proxy settings
     QNetworkProxyFactory::setUseSystemConfiguration(true);
 
     // Load
-    const QStringList pluginPaths = getPluginPaths() + installPluginPaths
-                                    + options.customPluginPaths;
-    PluginManager::setPluginPaths(Utils::transform(pluginPaths, &Utils::FilePath::fromUserInput));
+    const QStringList pluginPaths = installPluginPaths + options.customPluginPaths;
+    PluginManager::setPluginPaths(
+        getPluginPaths() + Utils::transform(pluginPaths, &FilePath::fromUserInput));
+
     QMap<QString, QString> foundAppOptions;
     if (pluginArguments.size() > 1) {
         QMap<QString, bool> appOptions;

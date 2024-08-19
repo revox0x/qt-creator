@@ -18,7 +18,6 @@
 #include <qmldesignerplugin.h>
 #include <bindingproperty.h>
 #include <designersettings.h>
-#include <designmodecontext.h>
 #include <model.h>
 #include <modelnode.h>
 #include <nodeabstractproperty.h>
@@ -205,9 +204,6 @@ void FormEditorView::createFormEditorWidget()
 
     m_currentTool = m_selectionTool.get();
 
-    auto formEditorContext = new Internal::FormEditorContext(m_formEditorWidget.data());
-    Core::ICore::addContextObject(formEditorContext);
-
     connect(m_formEditorWidget->zoomAction(), &ZoomAction::zoomLevelChanged, [this] {
         m_currentTool->formEditorItemsChanged(scene()->allFormEditorItems());
     });
@@ -368,7 +364,6 @@ WidgetInfo FormEditorView::widgetInfo()
     return createWidgetInfo(m_formEditorWidget.data(),
                             "FormEditor",
                             WidgetInfo::CentralPane,
-                            0,
                             tr("2D"),
                             tr("2D view"),
                             DesignerWidgetFlags::IgnoreErrors);
@@ -1000,10 +995,8 @@ void FormEditorView::setupRootItemSize()
         formEditorWidget()->setRootItemRect(rootRect);
         formEditorWidget()->centerScene();
 
-        auto contextImage = rootModelNode().auxiliaryData(contextImageProperty);
-
-        if (contextImage)
-            m_formEditorWidget->setBackgoundImage(contextImage.value().value<QImage>());
+        if (auto contextImage = rootModelNode().auxiliaryData(contextImageProperty))
+            formEditorWidget()->setBackgoundImage(contextImage.value().value<QImage>());
     }
 }
 

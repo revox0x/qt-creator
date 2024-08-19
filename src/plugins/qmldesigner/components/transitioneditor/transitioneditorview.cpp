@@ -28,8 +28,6 @@
 #include <qmltimeline.h>
 #include <qmltimelinekeyframegroup.h>
 
-#include <designmodecontext.h>
-
 #include <coreplugin/icore.h>
 #include <coreplugin/messagebox.h>
 
@@ -252,7 +250,7 @@ ModelNode TransitionEditorView::addNewTransition()
                                           }});
 #endif
                 transition.setAuxiliaryData(transitionDurationProperty, 2000);
-                transition.validId();
+                transition.ensureIdExists();
                 root.nodeListProperty("transitions").reparentHere(transition);
 
                 for (auto it = idPropertyList.cbegin(); it != idPropertyList.cend(); ++it) {
@@ -318,12 +316,8 @@ ModelNode TransitionEditorView::addNewTransition()
 
 TransitionEditorWidget *TransitionEditorView::createWidget()
 {
-    if (!m_transitionEditorWidget) {
+    if (!m_transitionEditorWidget)
         m_transitionEditorWidget = new TransitionEditorWidget(this);
-
-        auto *transitionContext = new TransitionContext(m_transitionEditorWidget);
-        Core::ICore::addContextObject(transitionContext);
-    }
 
     return m_transitionEditorWidget;
 }
@@ -333,7 +327,6 @@ WidgetInfo TransitionEditorView::widgetInfo()
     return createWidgetInfo(createWidget(),
                             "TransitionEditor",
                             WidgetInfo::BottomPane,
-                            0,
                             tr("Transitions"),
                             tr("Transitions view"));
 }

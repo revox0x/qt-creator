@@ -30,7 +30,6 @@
 #include <QDateTime>
 #include <QReadWriteLock>
 #include <QString>
-#include <QUuid>
 
 /*!
  * \class ProjectExplorer::IDevice::DeviceAction
@@ -89,7 +88,7 @@ namespace ProjectExplorer {
 
 static Id newId()
 {
-    return Id::fromString(QUuid::createUuid().toString());
+    return Id::generate();
 }
 
 const char DisplayNameKey[] = "Name";
@@ -121,16 +120,10 @@ const IDevice::MachineType DefaultMachineType = IDevice::Hardware;
 const int DefaultTimeout = 10;
 
 namespace Internal {
+
 class IDevicePrivate
 {
 public:
-    IDevicePrivate(std::unique_ptr<DeviceSettings> s)
-        : settings(std::move(s))
-    {
-        if (!settings)
-            settings = std::make_unique<DeviceSettings>();
-    }
-
     QString displayType;
     Id type;
     IDevice::Origin origin = IDevice::AutoDetected;
@@ -139,14 +132,12 @@ public:
     IDevice::MachineType machineType = IDevice::Hardware;
     OsType osType = OsTypeOther;
     DeviceFileAccess *fileAccess = nullptr;
+    std::function<DeviceFileAccess *()> fileAccessFactory;
     int version = 0; // This is used by devices that have been added by the SDK.
 
     Utils::SynchronizedValue<SshParameters> sshParameters;
 
     PortList freePorts;
-    FilePath debugServerPath;
-    FilePath debugDumperPath = Core::ICore::resourcePath("debugger/");
-    FilePath qmlRunCommand;
     bool emptyCommandAllowed = false;
 
     QList<Icon> deviceIcons;
@@ -154,16 +145,23 @@ public:
     Store extraData;
     IDevice::OpenTerminal openTerminal;
 
-    std::unique_ptr<DeviceSettings> settings;
+    Utils::StringAspect displayName;
+    Utils::FilePathAspect debugServerPath;
+    Utils::FilePathAspect qmlRunCommand;
 };
+
 } // namespace Internal
 
-DeviceSettings::DeviceSettings()
+DeviceTester::DeviceTester(QObject *parent) : QObject(parent) { }
+
+IDevice::IDevice()
+    : d(new Internal::IDevicePrivate)
 {
     setAutoApply(false);
 
-    displayName.setSettingsKey(DisplayNameKey);
-    displayName.setDisplayStyle(StringAspect::DisplayStyle::LineEditDisplay);
+    registerAspect(&d->displayName);
+    d->displayName.setSettingsKey(DisplayNameKey);
+    d->displayName.setDisplayStyle(StringAspect::DisplayStyle::LineEditDisplay);
 
     auto validateDisplayName = [](const QString &old,
                                   const QString &newValue) -> expected_str<void> {
@@ -179,9 +177,9 @@ DeviceSettings::DeviceSettings()
         return {};
     };
 
-    displayName.setValidationFunction(
+    d->displayName.setValidationFunction(
         [this, validateDisplayName](FancyLineEdit *edit, QString *errorMsg) -> bool {
-            auto result = validateDisplayName(displayName.value(), edit->text());
+            auto result = validateDisplayName(d->displayName.value(), edit->text());
             if (result)
                 return true;
 
@@ -191,7 +189,7 @@ DeviceSettings::DeviceSettings()
             return false;
         });
 
-    displayName.setValueAcceptor(
+    d->displayName.setValueAcceptor(
         [validateDisplayName](const QString &old,
                               const QString &newValue) -> std::optional<QString> {
             if (!validateDisplayName(old, newValue))
@@ -199,13 +197,12 @@ DeviceSettings::DeviceSettings()
 
             return newValue;
         });
-}
 
-DeviceTester::DeviceTester(QObject *parent) : QObject(parent) { }
+    registerAspect(&d->debugServerPath);
+    d->debugServerPath.setSettingsKey(DebugServerKey);
 
-IDevice::IDevice(std::unique_ptr<DeviceSettings> settings)
-    : d(new Internal::IDevicePrivate(std::move(settings)))
-{
+    registerAspect(&d->qmlRunCommand);
+    d->qmlRunCommand.setSettingsKey(QmlRuntimeKey);
 }
 
 IDevice::~IDevice() = default;
@@ -251,6 +248,9 @@ bool IDevice::isAnyUnixDevice() const
 
 DeviceFileAccess *IDevice::fileAccess() const
 {
+    if (d->fileAccessFactory)
+        return d->fileAccessFactory();
+
     return d->fileAccess;
 }
 
@@ -258,6 +258,26 @@ FilePath IDevice::filePath(const QString &pathOnDevice) const
 {
     // match DeviceManager::deviceForPath
     return FilePath::fromParts(u"device", id().toString(), pathOnDevice);
+}
+
+FilePath IDevice::debugServerPath() const
+{
+    return d->debugServerPath();
+}
+
+void IDevice::setDebugServerPath(const FilePath &path)
+{
+    d->debugServerPath.setValue(path);
+}
+
+FilePath IDevice::qmlRunCommand() const
+{
+    return d->qmlRunCommand();
+}
+
+void IDevice::setQmlRunCommand(const FilePath &path)
+{
+    d->qmlRunCommand.setValue(path);
 }
 
 bool IDevice::handlesFile(const FilePath &filePath) const
@@ -316,11 +336,6 @@ expected_str<Environment> IDevice::systemEnvironmentWithError() const
     return access->deviceEnvironment();
 }
 
-QString IDevice::displayName() const
-{
-    return d->settings->displayName();
-}
-
 QString IDevice::displayType() const
 {
     return d->displayType;
@@ -339,6 +354,11 @@ void IDevice::setOsType(OsType osType)
 void IDevice::setFileAccess(DeviceFileAccess *fileAccess)
 {
     d->fileAccess = fileAccess;
+}
+
+void IDevice::setFileAccess(std::function<Utils::DeviceFileAccess *()> fileAccessFactory)
+{
+    d->fileAccessFactory = fileAccessFactory;
 }
 
 IDevice::DeviceInfo IDevice::deviceInformation() const
@@ -487,11 +507,11 @@ Id IDevice::idFromMap(const Store &map)
 
 void IDevice::fromMap(const Store &map)
 {
+    AspectContainer::fromMap(map);
     d->type = typeFromMap(map);
-    settings()->fromMap(map);
 
     d->id = Id::fromSetting(map.value(IdKey));
-    d->osType = osTypeFromString(map.value(ClientOsTypeKey, osTypeToString(OsTypeLinux)).toString());
+    d->osType = osTypeFromString(map.value(ClientOsTypeKey).toString()).value_or(OsTypeLinux);
     if (!d->id.isValid())
         d->id = newId();
     d->origin = static_cast<Origin>(map.value(OriginKey, ManuallyAdded).toInt());
@@ -521,9 +541,6 @@ void IDevice::fromMap(const Store &map)
     d->machineType = static_cast<MachineType>(map.value(MachineTypeKey, DefaultMachineType).toInt());
     d->version = map.value(VersionKey, 0).toInt();
 
-    d->debugServerPath = FilePath::fromSettings(map.value(DebugServerKey));
-    const FilePath qmlRunCmd = FilePath::fromSettings(map.value(QmlRuntimeKey));
-    d->qmlRunCommand = qmlRunCmd;
     d->extraData = storeFromVariant(map.value(ExtraDataKey));
 }
 
@@ -533,10 +550,9 @@ void IDevice::fromMap(const Store &map)
     call the base class implementation.
 */
 
-Store IDevice::toMap() const
+void IDevice::toMap(Store &map) const
 {
-    Store map;
-    d->settings->toMap(map);
+    AspectContainer::toMap(map);
 
     map.insert(TypeKey, d->type.toString());
     map.insert(ClientOsTypeKey, osTypeToString(d->osType));
@@ -558,31 +574,48 @@ Store IDevice::toMap() const
     map.insert(PortsSpecKey, d->freePorts.toString());
     map.insert(VersionKey, d->version);
 
-    map.insert(DebugServerKey, d->debugServerPath.toSettings());
-    map.insert(QmlRuntimeKey, d->qmlRunCommand.toSettings());
-
     map.insert(ExtraDataKey, variantFromStore(d->extraData));
-
-    return map;
 }
 
 IDevice::Ptr IDevice::clone() const
 {
     IDeviceFactory *factory = IDeviceFactory::find(d->type);
     QTC_ASSERT(factory, return {});
+    Store store;
+    toMap(store);
     IDevice::Ptr device = factory->construct();
     QTC_ASSERT(device, return {});
     device->d->deviceState = d->deviceState;
     device->d->deviceActions = d->deviceActions;
     device->d->deviceIcons = d->deviceIcons;
     device->d->osType = d->osType;
-    device->fromMap(toMap());
+    device->fromMap(store);
     return device;
 }
 
-DeviceSettings *IDevice::settings() const
+QString IDevice::displayName() const
 {
-    return d->settings.get();
+    return d->displayName();
+}
+
+void IDevice::setDisplayName(const QString &name)
+{
+    d->displayName.setValue(name);
+}
+
+QString IDevice::defaultDisplayName() const
+{
+    return d->displayName.defaultValue();
+}
+
+void IDevice::setDefaultDisplayName(const QString &name)
+{
+    d->displayName.setDefaultValue(name);
+}
+
+void IDevice::addDisplayNameToLayout(Layouting::Layout &layout) const
+{
+    d->displayName.addToLayout(layout);
 }
 
 QString IDevice::deviceStateToString() const
@@ -650,26 +683,6 @@ FilePath IDevice::rootPath() const
     return FilePath::fromParts(u"device", id().toString(), u"/");
 }
 
-FilePath IDevice::debugServerPath() const
-{
-    return d->debugServerPath;
-}
-
-void IDevice::setDebugServerPath(const FilePath &path)
-{
-    d->debugServerPath = path;
-}
-
-FilePath IDevice::qmlRunCommand() const
-{
-    return d->qmlRunCommand;
-}
-
-void IDevice::setQmlRunCommand(const FilePath &path)
-{
-    d->qmlRunCommand = path;
-}
-
 void IDevice::setExtraData(Id kind, const QVariant &data)
 {
     d->extraData.insert(keyFromString(kind.toString()), data);
@@ -716,6 +729,11 @@ bool IDevice::prepareForBuild(const Target *target)
 std::optional<Utils::FilePath> IDevice::clangdExecutable() const
 {
     return std::nullopt;
+}
+
+void IDevice::doApply() const
+{
+    const_cast<IDevice *>(this)->apply();
 }
 
 void DeviceProcessSignalOperation::setDebuggerCommand(const FilePath &cmd)

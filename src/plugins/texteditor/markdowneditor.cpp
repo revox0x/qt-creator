@@ -110,10 +110,23 @@ public:
         m_textEditorWidget->setTextDocument(m_document);
         m_textEditorWidget->setupGenericHighlighter();
         m_textEditorWidget->setMarksVisible(false);
-        auto context = new IContext(this);
-        context->setWidget(m_textEditorWidget);
-        context->setContext(Context(MARKDOWNVIEWER_TEXT_CONTEXT));
-        ICore::addContextObject(context);
+        QObject::connect(
+            m_textEditorWidget,
+            &TextEditorWidget::saveCurrentStateForNavigationHistory,
+            this,
+            &MarkdownEditor::saveCurrentStateForNavigationHistory);
+        QObject::connect(
+            m_textEditorWidget,
+            &TextEditorWidget::addSavedStateToNavigationHistory,
+            this,
+            &MarkdownEditor::addSavedStateToNavigationHistory);
+        QObject::connect(
+            m_textEditorWidget,
+            &TextEditorWidget::addCurrentStateToNavigationHistory,
+            this,
+            &MarkdownEditor::addCurrentStateToNavigationHistory);
+
+        IContext::attach(m_textEditorWidget, Context(MARKDOWNVIEWER_TEXT_CONTEXT));
 
         m_splitter->addWidget(m_textEditorWidget); // sets splitter->focusWidget() on non-Windows
         m_splitter->addWidget(m_previewWidget);
@@ -476,6 +489,18 @@ private:
         }
     }
 
+    void saveCurrentStateForNavigationHistory() { m_savedNavigationState = saveState(); }
+
+    void addSavedStateToNavigationHistory()
+    {
+        EditorManager::addCurrentPositionToNavigationHistory(m_savedNavigationState);
+    }
+
+    void addCurrentStateToNavigationHistory()
+    {
+        EditorManager::addCurrentPositionToNavigationHistory();
+    }
+
 private:
     QTimer m_previewTimer;
     bool m_performDelayedUpdate = false;
@@ -491,6 +516,7 @@ private:
     QAction *m_togglePreviewVisibleAction;
     QAction *m_swapViewsAction;
     std::optional<QPoint> m_previewRestoreScrollPosition;
+    QByteArray m_savedNavigationState;
 };
 
 class MarkdownEditorFactory final : public IEditorFactory

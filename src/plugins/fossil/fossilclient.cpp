@@ -4,7 +4,6 @@
 #include "fossilclient.h"
 
 #include "constants.h"
-#include "fossileditor.h"
 #include "fossiltr.h"
 
 #include <vcsbase/vcsbaseplugin.h>
@@ -701,7 +700,7 @@ void FossilClient::annotate(const FilePath &workingDir, const QString &file, int
                                                   VcsBaseEditor::getCodec(source),
                                                   vcsCmdString.toLatin1().constData(), id);
 
-    auto *fossilEditor = qobject_cast<FossilEditorWidget *>(editor);
+    auto fossilEditor = qobject_cast<VcsBaseEditorWidget *>(editor);
     QTC_ASSERT(fossilEditor, return);
 
     if (!fossilEditor->editorConfig()) {
@@ -742,9 +741,8 @@ void FossilClient::annotate(const FilePath &workingDir, const QString &file, int
 bool FossilClient::isVcsFileOrDirectory(const FilePath &filePath) const
 {
     // false for any dir or file other than fossil checkout db-file
-    return filePath.toFileInfo().isFile()
-           && !filePath.fileName().compare(Constants::FOSSILREPO,
-                                           HostOsInfo::fileNameCaseSensitivity());
+    return !filePath.fileName().compare(Constants::FOSSILREPO, HostOsInfo::fileNameCaseSensitivity())
+           && filePath.isFile();
 }
 
 FilePath FossilClient::findTopLevelForFile(const FilePath &file) const
@@ -906,7 +904,7 @@ void FossilClient::log(const FilePath &workingDir, const QStringList &files,
                                                   VcsBaseEditor::getCodec(source),
                                                   vcsCmdString.toLatin1().constData(), id);
 
-    auto *fossilEditor = qobject_cast<FossilEditorWidget *>(editor);
+    auto fossilEditor = qobject_cast<VcsBaseEditorWidget *>(editor);
     QTC_ASSERT(fossilEditor, return);
 
     fossilEditor->setFileLogAnnotateEnabled(enableAnnotationContextMenu);
@@ -962,7 +960,7 @@ void FossilClient::logCurrentFile(const FilePath &workingDir, const QStringList 
                                                   VcsBaseEditor::getCodec(source),
                                                   vcsCmdString.toLatin1().constData(), id);
 
-    auto *fossilEditor = qobject_cast<FossilEditorWidget *>(editor);
+    auto fossilEditor = qobject_cast<VcsBaseEditorWidget *>(editor);
     QTC_ASSERT(fossilEditor, return);
 
     fossilEditor->setFileLogAnnotateEnabled(enableAnnotationContextMenu);

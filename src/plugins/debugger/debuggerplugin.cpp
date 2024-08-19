@@ -83,6 +83,7 @@
 #include <utils/basetreeview.h>
 #include <utils/checkablemessagebox.h>
 #include <utils/fancymainwindow.h>
+#include <utils/fileutils.h>
 #include <utils/hostosinfo.h>
 #include <utils/processinfo.h>
 #include <utils/proxyaction.h>
@@ -432,19 +433,11 @@ QAction *addCheckableAction(const QObject *parent, QMenu *menu, const QString &d
 //
 ///////////////////////////////////////////////////////////////////////
 
-class DebugMode : public IMode
+class DebugModeWidget final : public MiniSplitter
 {
 public:
-    DebugMode()
+    DebugModeWidget()
     {
-        setObjectName("DebugMode");
-        setContext(Context(C_DEBUGMODE, CC::C_NAVIGATION_PANE));
-        setDisplayName(Tr::tr("Debug"));
-        setIcon(Utils::Icon::modeIcon(Icons::MODE_DEBUGGER_CLASSIC,
-                                      Icons::MODE_DEBUGGER_FLAT, Icons::MODE_DEBUGGER_FLAT_ACTIVE));
-        setPriority(85);
-        setId(MODE_DEBUG);
-
         DebuggerMainWindow *mainWindow = DebuggerMainWindow::instance();
 
         auto editorHolderLayout = new QVBoxLayout;
@@ -483,24 +476,38 @@ public:
         mainWindowSplitter->setOrientation(Qt::Vertical);
 
         // Navigation and right-side window.
-        auto splitter = new MiniSplitter;
-        splitter->setFocusProxy(DebuggerMainWindow::centralWidgetStack());
-        splitter->addWidget(new NavigationWidgetPlaceHolder(MODE_DEBUG, Side::Left));
-        splitter->addWidget(mainWindowSplitter);
-        splitter->setStretchFactor(0, 0);
-        splitter->setStretchFactor(1, 1);
-        splitter->setObjectName("DebugModeWidget");
+        setFocusProxy(DebuggerMainWindow::centralWidgetStack());
+        addWidget(new NavigationWidgetPlaceHolder(MODE_DEBUG, Side::Left));
+        addWidget(mainWindowSplitter);
+        setStretchFactor(0, 0);
+        setStretchFactor(1, 1);
+        setObjectName("DebugModeWidget");
 
         mainWindow->addSubPerspectiveSwitcher(EngineManager::engineChooser());
         mainWindow->addSubPerspectiveSwitcher(EngineManager::dapEngineChooser());
 
-        setWidget(splitter);
-        setMainWindow(mainWindow);
-
-        setMenu(DebuggerMainWindow::perspectiveMenu());
+        IContext::attach(this, Context(CC::C_EDITORMANAGER));
     }
+};
 
-    ~DebugMode() { delete widget(); }
+class DebugMode final : public IMode
+{
+public:
+    DebugMode()
+    {
+        setObjectName("DebugMode");
+        setContext(Context(C_DEBUGMODE, CC::C_NAVIGATION_PANE));
+        setDisplayName(Tr::tr("Debug"));
+        setIcon(Utils::Icon::modeIcon(Icons::MODE_DEBUGGER_CLASSIC,
+                                      Icons::MODE_DEBUGGER_FLAT, Icons::MODE_DEBUGGER_FLAT_ACTIVE));
+        setPriority(85);
+        setId(MODE_DEBUG);
+
+        setWidgetCreator([] { return new DebugModeWidget; });
+        setMainWindow(DebuggerMainWindow::instance());
+
+        setMenu(&DebuggerMainWindow::addPerspectiveMenu);
+    }
 };
 
 ///////////////////////////////////////////////////////////////////////
@@ -649,7 +656,7 @@ public:
 
     ActionContainer *m_menu = nullptr;
 
-    QVector<DebuggerRunTool *> m_scheduledStarts;
+    QList<DebuggerRunTool *> m_scheduledStarts;
 
     ProxyAction m_visibleStartAction; // The fat debug button
     ProxyAction m_hiddenStopAction;
@@ -683,7 +690,6 @@ public:
     QStringList m_arguments;
 
     QList<IOptionsPage *> m_optionPages;
-    IContext m_debugModeContext;
 
     Perspective m_perspective{Constants::PRESET_PERSPECTIVE_ID, Tr::tr("Debugger")};
     Perspective m_perspectiveDap{Constants::DAP_PERSPECTIVE_ID, Tr::tr("DAP")};
@@ -1165,10 +1171,6 @@ DebuggerPluginPrivate::DebuggerPluginPrivate(const QStringList &arguments)
     // Debug mode setup
     m_mode = new DebugMode;
 
-    m_debugModeContext.setContext(Context(CC::C_EDITORMANAGER));
-    m_debugModeContext.setWidget(m_mode->widget());
-    ICore::addContextObject(&m_debugModeContext);
-
     //
     //  Connections
     //
@@ -1224,6 +1226,7 @@ void DebuggerPluginPrivate::createDapDebuggerPerspective(QWidget *globalLogWindo
                        ProjectExplorer::Constants::DAP_CMAKE_DEBUG_RUN_MODE,
                        /*forceSkipDeploy=*/true},
         DapPerspective{Tr::tr("GDB Preset"), ProjectExplorer::Constants::DAP_GDB_DEBUG_RUN_MODE},
+        DapPerspective{Tr::tr("LLDB Preset"), ProjectExplorer::Constants::DAP_LLDB_DEBUG_RUN_MODE},
         DapPerspective{Tr::tr("Python Preset"), ProjectExplorer::Constants::DAP_PY_DEBUG_RUN_MODE},
     };
 
